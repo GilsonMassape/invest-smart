@@ -3,6 +3,7 @@ import type { Session } from '@supabase/supabase-js';
 import {
   getCurrentSession,
   onAuthStateChange,
+  recoverSessionFromUrl,
   signInWithMagicLink,
   signOut,
 } from '../services/auth';
@@ -21,7 +22,8 @@ export const AuthGate = ({ children }: AuthGateProps) => {
   useEffect(() => {
     let mounted = true;
 
-    const loadSession = async () => {
+    const bootstrap = async () => {
+      await recoverSessionFromUrl();
       const { data } = await getCurrentSession();
 
       if (mounted) {
@@ -30,10 +32,11 @@ export const AuthGate = ({ children }: AuthGateProps) => {
       }
     };
 
-    loadSession();
+    bootstrap();
 
     const { data: subscription } = onAuthStateChange(
       async (_event, nextSession) => {
+        if (!mounted) return;
         setSession(nextSession);
         setLoading(false);
       }
