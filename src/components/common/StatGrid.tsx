@@ -1,0 +1,3 @@
+import { toMoney } from '../../utils/number';
+interface Props{totalInvested:number;monthlyContribution:number;rankedCount:number;}
+export const StatGrid=({totalInvested,monthlyContribution,rankedCount}:Props)=><div className='stat-grid'><div className='stat-box'><span>Total da carteira</span><strong>{toMoney(totalInvested)}</strong></div><div className='stat-box'><span>Aporte mensal</span><strong>{toMoney(monthlyContribution)}</strong></div><div className='stat-box'><span>Ativos ranqueados</span><strong>{rankedCount}</strong></div></div>;
