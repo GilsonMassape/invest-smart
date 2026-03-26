@@ -8,10 +8,6 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview"
   },
-  "overrides": {
-    "@supabase/auth-js": "latest",
-    "@supabase/supabase-js": "latest"
-  },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
     "pdfjs-dist": "^5.5.207",
