@@ -5,6 +5,7 @@ import type {
   B3ParsedPosition,
 } from '../../domain/import/b3Import';
 import { buildB3ImportPreview } from '../../domain/import/b3Import';
+import { parseB3ImportFile } from '../../engine/import/b3ImportService';
 
 const B3ImportModal = lazy(async () => {
   const module = await import('./B3ImportModal');
@@ -21,13 +22,7 @@ interface B3ImportButtonProps {
 
 const INITIAL_MODE: B3ImportMode = 'MERGE';
 
-async function loadB3PdfParser() {
-  const module = await import('../../infra/B3/parseB3Pdf');
-  if (typeof module.parseB3Pdf !== 'function') {
-    throw new Error('B3 parser module is invalid.');
-  }
-  return module.parseB3Pdf;
-}
+const readFileAsText = async (file: File): Promise<string> => file.text();
 
 export function B3ImportButton({
   currentPositions,
@@ -94,19 +89,21 @@ export function B3ImportButton({
       setParsedPositions([]);
 
       try {
-        const parseB3Pdf = await loadB3PdfParser();
-        const parsed = await parseB3Pdf(file);
+        const content = await readFileAsText(file);
+        const result = parseB3ImportFile(content);
 
-        if (!Array.isArray(parsed) || parsed.length === 0) {
-          setErrorMessage('Nenhum ativo elegível foi encontrado no PDF da B3.');
+        if (!Array.isArray(result.positions) || result.positions.length === 0) {
+          setErrorMessage(
+            'Nenhum ativo elegível foi encontrado no arquivo da B3.'
+          );
           return;
         }
 
-        setParsedPositions(parsed);
+        setParsedPositions(result.positions);
       } catch (error) {
-        console.error('Failed to parse B3 PDF.', error);
+        console.error('Failed to parse B3 file.', error);
         setErrorMessage(
-          'Não foi possível processar o arquivo da B3. Verifique o PDF e tente novamente.'
+          'Não foi possível processar o arquivo da B3. Verifique o arquivo e tente novamente.'
         );
       } finally {
         setIsProcessing(false);
@@ -133,7 +130,7 @@ export function B3ImportButton({
       <input
         ref={inputRef}
         type="file"
-        accept="application/pdf"
+        accept=".csv,.txt,text/csv,text/plain"
         hidden
         onChange={handleFileSelection}
       />
