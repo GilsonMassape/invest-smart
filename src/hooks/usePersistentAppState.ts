@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getSupabase } from '../services/supabaseClient';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppState,
   AssetType,
@@ -11,8 +9,10 @@ import type {
 } from '../domain/types';
 import { DEFAULT_STATE } from '../data/defaults';
 import { loadAppState, saveAppState } from '../services/storage/appStorage';
-
-const supabase = getSupabase();
+import {
+  loadCloudAppState,
+  saveCloudAppState,
+} from '../services/storage/cloudStorage';
 
 type StateUpdater<T> = (value: T) => void;
 
@@ -35,224 +35,252 @@ interface PersistentAppStateResult {
   actions: PersistentAppStateActions;
 }
 
-const PORTFOLIO_TABLE = 'portfolio_positions';
+const normalizeTicker = (ticker: string): string => ticker.trim().toUpperCase();
 
-const cloneDefaultState = (): AppState => ({
-  ...DEFAULT_STATE,
-  positions: [...DEFAULT_STATE.positions],
-  preferences: {
-    ...DEFAULT_STATE.preferences,
-    preferredTypes: [...DEFAULT_STATE.preferences.preferredTypes],
-    blockedTickers: [...DEFAULT_STATE.preferences.blockedTickers],
-  },
+const normalizePosition = (position: PortfolioPosition): PortfolioPosition => ({
+  ticker: normalizeTicker(position.ticker),
+  quantity: Number(position.quantity) || 0,
+  avgPrice: Number(position.avgPrice) || 0,
 });
 
-const getInitialState = (): AppState => loadAppState() ?? cloneDefaultState();
+const sanitizeState = (input: AppState): AppState => ({
+  preferences: {
+    riskProfile:
+      input.preferences?.riskProfile ??
+      DEFAULT_STATE.preferences.riskProfile,
 
-const sanitizeTicker = (ticker: string): string =>
-  ticker.trim().toUpperCase();
+    macroScenario:
+      input.preferences?.macroScenario ??
+      DEFAULT_STATE.preferences.macroScenario,
 
-const sanitizeNumber = (value: unknown): number =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    preferredTypes:
+      input.preferences?.preferredTypes ??
+      DEFAULT_STATE.preferences.preferredTypes,
 
-const normalizePositions = (
-  positions: PortfolioPosition[]
+    blockedTickers: Array.isArray(input.preferences?.blockedTickers)
+      ? input.preferences.blockedTickers.map((ticker) =>
+          ticker.trim().toUpperCase()
+        )
+      : [],
+  },
+
+  monthlyContribution:
+    Number(input.monthlyContribution) ||
+    DEFAULT_STATE.monthlyContribution,
+
+  filterType:
+    input.filterType ??
+    DEFAULT_STATE.filterType,
+
+  positions: Array.isArray(input.positions)
+    ? input.positions
+        .map((position) => ({
+          ticker: position.ticker.trim().toUpperCase(),
+          quantity: Number(position.quantity) || 0,
+          avgPrice: Number(position.avgPrice) || 0,
+        }))
+        .filter((position) => position.ticker.length > 0)
+    : [],
+});
+
+const mergeState = (base: AppState, incoming: AppState): AppState =>
+  sanitizeState({
+    ...base,
+    ...incoming,
+    preferences: {
+      ...base.preferences,
+      ...incoming.preferences,
+    },
+  });
+
+const upsertSinglePosition = (
+  positions: PortfolioPosition[],
+  nextPosition: PortfolioPosition
 ): PortfolioPosition[] => {
-  const map = new Map<string, PortfolioPosition>();
+  const normalized = normalizePosition(nextPosition);
 
-  for (const p of positions) {
-    const ticker = sanitizeTicker(p.ticker);
-    if (!ticker) continue;
-
-    map.set(ticker, {
-      ticker,
-      quantity: sanitizeNumber(p.quantity),
-      avgPrice: sanitizeNumber(p.avgPrice),
-    });
+  if (!normalized.ticker) {
+    return positions;
   }
 
-  return [...map.values()].sort((a, b) =>
-    a.ticker.localeCompare(b.ticker)
-  );
+  const next = [...positions];
+  const index = next.findIndex((item) => item.ticker === normalized.ticker);
+
+  if (index >= 0) {
+    next[index] = normalized;
+    return next;
+  }
+
+  next.push(normalized);
+  return next;
 };
 
-const signature = (positions: PortfolioPosition[]) =>
-  JSON.stringify(normalizePositions(positions));
-
 export const usePersistentAppState = (): PersistentAppStateResult => {
-  const [state, setState] = useState<AppState>(getInitialState);
+  const [state, setState] = useState<AppState>(() => {
+    const localState = loadAppState();
 
-  const supabaseRef = useRef<SupabaseClient | null>(supabase);
-  const hydratedRef = useRef(false);
-  const syncingRef = useRef(false);
+    if (!localState) {
+      return sanitizeState(DEFAULT_STATE);
+    }
 
-  const lastSignatureRef = useRef(signature(state.positions));
+    return mergeState(DEFAULT_STATE, localState);
+  });
 
-  // LOCAL STORAGE
+  const hasBootstrappedCloudRef = useRef(false);
+  const lastSavedStateRef = useRef<string>('');
+
   useEffect(() => {
-    saveAppState(state);
-  }, [state]);
+    if (hasBootstrappedCloudRef.current) {
+      return;
+    }
 
-  // HYDRATE (APENAS UMA VEZ)
-  useEffect(() => {
-    if (hydratedRef.current) return;
-    hydratedRef.current = true;
+    hasBootstrappedCloudRef.current = true;
 
     let cancelled = false;
 
-    const run = async () => {
-      const client = supabaseRef.current;
-      if (!client) return;
+    const bootstrapCloudState = async () => {
+      try {
+        const cloudState = await loadCloudAppState();
 
-      const sessionResult = await client.auth.getSession();
-      const user = sessionResult.data.session?.user;
-      if (!user) return;
+        if (!cloudState || cancelled) {
+          return;
+        }
 
-      const { data, error } = await client
-        .from(PORTFOLIO_TABLE)
-        .select('ticker, quantity, avg_price')
-        .eq('user_id', user.id);
-
-      if (error || cancelled || !data) return;
-
-      const positions = normalizePositions(
-        data.map((row) => ({
-          ticker: row.ticker,
-          quantity: row.quantity,
-          avgPrice: row.avg_price,
-        }))
-      );
-
-      lastSignatureRef.current = signature(positions);
-
-      setState((prev) => ({
-        ...prev,
-        positions,
-      }));
+        setState((current) => mergeState(current, cloudState));
+      } catch (error) {
+        console.error('Erro ao carregar estado em nuvem:', error);
+      }
     };
 
-    run();
+    void bootstrapCloudState();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  // SYNC (CONTROLADO)
   useEffect(() => {
-    const client = supabaseRef.current;
-    if (!client) return;
+    const sanitized = sanitizeState(state);
+    const serialized = JSON.stringify(sanitized);
 
-    if (syncingRef.current) return;
+    if (serialized === lastSavedStateRef.current) {
+      return;
+    }
 
-    const currentSig = signature(state.positions);
+    lastSavedStateRef.current = serialized;
+    saveAppState(sanitized);
 
-    if (currentSig === lastSignatureRef.current) return;
-
-    syncingRef.current = true;
-
-    let cancelled = false;
-
-    const run = async () => {
-      const sessionResult = await client.auth.getSession();
-      const user = sessionResult.data.session?.user;
-      if (!user) {
-        syncingRef.current = false;
-        return;
+    const persistCloudState = async () => {
+      try {
+        await saveCloudAppState(sanitized);
+      } catch (error) {
+        console.error('Erro ao salvar estado em nuvem:', error);
       }
-
-      await client
-        .from(PORTFOLIO_TABLE)
-        .delete()
-        .eq('user_id', user.id);
-
-      if (state.positions.length > 0) {
-        await client.from(PORTFOLIO_TABLE).insert(
-          state.positions.map((p) => ({
-            user_id: user.id,
-            ticker: p.ticker,
-            quantity: p.quantity,
-            avg_price: p.avgPrice,
-          }))
-        );
-      }
-
-      if (!cancelled) {
-        lastSignatureRef.current = currentSig;
-      }
-
-      syncingRef.current = false;
     };
 
-    run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [state.positions]);
-
-  const setPref =
-    <K extends keyof AppState['preferences']>(key: K) =>
-    (value: AppState['preferences'][K]) => {
-      setState((prev) => ({
-        ...prev,
-        preferences: {
-          ...prev.preferences,
-          [key]: value,
-        },
-      }));
-    };
+    void persistCloudState();
+  }, [state]);
 
   const actions = useMemo<PersistentAppStateActions>(
     () => ({
-      updateRiskProfile: setPref('riskProfile'),
-      updateMacroScenario: setPref('macroScenario'),
-      updatePreferredTypes: setPref('preferredTypes'),
-      updateBlockedTickers: setPref('blockedTickers'),
+      updateRiskProfile: (value) => {
+        setState((current) => ({
+          ...current,
+          preferences: {
+            ...current.preferences,
+            riskProfile: value,
+          },
+        }));
+      },
 
-      updateMonthlyContribution: (value) =>
-        setState((prev) => ({ ...prev, monthlyContribution: value })),
+      updateMacroScenario: (value) => {
+        setState((current) => ({
+          ...current,
+          preferences: {
+            ...current.preferences,
+            macroScenario: value,
+          },
+        }));
+      },
 
-      updateFilterType: (value) =>
-        setState((prev) => ({ ...prev, filterType: value })),
+      updatePreferredTypes: (_value) => {
+        console.warn('updatePreferredTypes não é utilizado pelo estado atual.');
+      },
 
-      upsertPosition: (p) =>
-        setState((prev) => ({
-          ...prev,
-          positions: normalizePositions([...prev.positions, p]),
-        })),
+      updateBlockedTickers: (value) => {
+        setState((current) => ({
+          ...current,
+          preferences: {
+            ...current.preferences,
+            blockedTickers: value.map((ticker) => normalizeTicker(ticker)),
+          },
+        }));
+      },
 
-      upsertManyPositions: (positions) =>
-        setState((prev) => ({
-          ...prev,
-          positions: normalizePositions([
-            ...prev.positions,
-            ...positions,
-          ]),
-        })),
+      updateMonthlyContribution: (value) => {
+        setState((current) => ({
+          ...current,
+          monthlyContribution: Number(value) || 0,
+        }));
+      },
 
-      replacePositions: (positions) =>
-        setState((prev) => ({
-          ...prev,
-          positions: normalizePositions(positions),
-        })),
+      updateFilterType: (value) => {
+        setState((current) => ({
+          ...current,
+          filterType: value,
+        }));
+      },
 
-      removePosition: (ticker) =>
-        setState((prev) => ({
-          ...prev,
-          positions: prev.positions.filter(
-            (p) => p.ticker !== sanitizeTicker(ticker)
+      upsertPosition: (value) => {
+        setState((current) => ({
+          ...current,
+          positions: upsertSinglePosition(current.positions, value),
+        }));
+      },
+
+      upsertManyPositions: (value) => {
+        setState((current) => {
+          const nextPositions = value.reduce<PortfolioPosition[]>(
+            (accumulator, position) => upsertSinglePosition(accumulator, position),
+            current.positions
+          );
+
+          return {
+            ...current,
+            positions: nextPositions,
+          };
+        });
+      },
+
+      replacePositions: (value) => {
+        setState((current) => ({
+          ...current,
+          positions: value
+            .map(normalizePosition)
+            .filter((position) => position.ticker.length > 0),
+        }));
+      },
+
+      removePosition: (ticker) => {
+        const normalizedTicker = normalizeTicker(ticker);
+
+        setState((current) => ({
+          ...current,
+          positions: current.positions.filter(
+            (position) => position.ticker !== normalizedTicker
           ),
-        })),
+        }));
+      },
 
       resetState: () => {
-        const next = cloneDefaultState();
-        lastSignatureRef.current = signature(next.positions);
-        setState(next);
+        setState(sanitizeState(DEFAULT_STATE));
       },
     }),
     []
   );
 
-  return { state, actions };
+  return {
+    state: sanitizeState(state),
+    actions,
+  };
 };
