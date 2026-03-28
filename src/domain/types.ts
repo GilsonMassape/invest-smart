@@ -70,6 +70,7 @@ export interface RankedAsset extends Asset {
   ownedQuantity: number;
   currentMarketValue: number;
   currentAllocationPct: number;
+  percentile?: number;
 }
 
 export type TagKey = 'strongBuy' | 'highConfidence' | 'underweight';

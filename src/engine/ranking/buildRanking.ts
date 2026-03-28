@@ -7,6 +7,7 @@ import type {
 } from '../../domain/types';
 import { enrichAssetWithScore } from '../score/getAssetScore';
 import { safeDivide } from '../../utils/number';
+import { normalizeRanking } from './normalizeRanking';
 
 interface PortfolioContext {
   positionsByTicker: Map<string, PortfolioPosition>;
@@ -19,11 +20,15 @@ interface RankedAssetSnapshot {
   currentAllocationPct: number;
 }
 
+type RankedAssetWithPercentile = RankedAsset & {
+  percentile: number;
+};
+
 const isPositiveNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
 
 const buildPositionsMap = (
-  positions: PortfolioPosition[]
+  positions: PortfolioPosition[],
 ): Map<string, PortfolioPosition> => {
   const positionsByTicker = new Map<string, PortfolioPosition>();
 
@@ -37,7 +42,7 @@ const buildPositionsMap = (
 
 const calculatePositionMarketValue = (
   asset: Asset,
-  position?: PortfolioPosition
+  position?: PortfolioPosition,
 ): number => {
   if (!position) return 0;
   if (!isPositiveNumber(position.quantity)) return 0;
@@ -48,7 +53,7 @@ const calculatePositionMarketValue = (
 
 const calculateTotalPortfolioMarketValue = (
   assets: Asset[],
-  positionsByTicker: Map<string, PortfolioPosition>
+  positionsByTicker: Map<string, PortfolioPosition>,
 ): number => {
   let totalPortfolioMarketValue = 0;
 
@@ -62,7 +67,7 @@ const calculateTotalPortfolioMarketValue = (
 
 const buildPortfolioContext = (
   assets: Asset[],
-  positions: PortfolioPosition[]
+  positions: PortfolioPosition[],
 ): PortfolioContext => {
   const positionsByTicker = buildPositionsMap(positions);
 
@@ -70,7 +75,7 @@ const buildPortfolioContext = (
     positionsByTicker,
     totalPortfolioMarketValue: calculateTotalPortfolioMarketValue(
       assets,
-      positionsByTicker
+      positionsByTicker,
     ),
   };
 };
@@ -82,19 +87,19 @@ const getOwnedQuantity = (position?: PortfolioPosition): number => {
 
 const getCurrentAllocationPct = (
   currentMarketValue: number,
-  totalPortfolioMarketValue: number
+  totalPortfolioMarketValue: number,
 ): number => safeDivide(currentMarketValue * 100, totalPortfolioMarketValue);
 
 const buildRankedAssetSnapshot = (
   asset: Asset,
   position: PortfolioPosition | undefined,
-  totalPortfolioMarketValue: number
+  totalPortfolioMarketValue: number,
 ): RankedAssetSnapshot => {
   const ownedQuantity = getOwnedQuantity(position);
   const currentMarketValue = calculatePositionMarketValue(asset, position);
   const currentAllocationPct = getCurrentAllocationPct(
     currentMarketValue,
-    totalPortfolioMarketValue
+    totalPortfolioMarketValue,
   );
 
   return {
@@ -108,23 +113,23 @@ const normalizeBreakdownMetric = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0;
 
 const buildExplainabilityBreakdown = (
-  score: ScoreBreakdown
+  score: ScoreBreakdown,
 ): NonNullable<ScoreBreakdown['breakdown']> => ({
   macro: normalizeBreakdownMetric(
-    score.breakdown?.macro ?? score.macroAdjustment
+    score.breakdown?.macro ?? score.macroAdjustment,
   ),
   profile: normalizeBreakdownMetric(
-    score.breakdown?.profile ?? score.preferenceBonus
+    score.breakdown?.profile ?? score.preferenceBonus,
   ),
   concentration: normalizeBreakdownMetric(
-    score.breakdown?.concentration ?? Math.abs(score.concentrationPenalty)
+    score.breakdown?.concentration ?? Math.abs(score.concentrationPenalty),
   ),
 });
 
 const buildFallbackRationale = (
   asset: Asset,
   score: ScoreBreakdown,
-  currentAllocationPct: number
+  currentAllocationPct: number,
 ): string[] => {
   const rationale: string[] = [];
 
@@ -141,7 +146,9 @@ const buildFallbackRationale = (
   }
 
   rationale.push(
-    currentAllocationPct > 0 ? 'Ativo já presente na carteira' : 'Sem posição atual'
+    currentAllocationPct > 0
+      ? 'Ativo já presente na carteira'
+      : 'Sem posição atual',
   );
 
   return rationale;
@@ -150,7 +157,7 @@ const buildFallbackRationale = (
 const buildExplainabilityRationale = (
   asset: Asset,
   score: ScoreBreakdown,
-  currentAllocationPct: number
+  currentAllocationPct: number,
 ): string[] => {
   if (Array.isArray(score.rationale) && score.rationale.length > 0) {
     return score.rationale;
@@ -166,7 +173,7 @@ const buildExplainabilityRationale = (
 const normalizeScoreExplainability = (
   asset: Asset,
   score: ScoreBreakdown,
-  currentAllocationPct: number
+  currentAllocationPct: number,
 ): ScoreBreakdown => ({
   ...score,
   breakdown: buildExplainabilityBreakdown(score),
@@ -177,18 +184,20 @@ const buildRankedAsset = (
   asset: Asset,
   preferences: Preferences,
   position: PortfolioPosition | undefined,
-  totalPortfolioMarketValue: number
+  totalPortfolioMarketValue: number,
 ): RankedAsset => {
   const snapshot = buildRankedAssetSnapshot(
     asset,
     position,
-    totalPortfolioMarketValue
+    totalPortfolioMarketValue,
   );
 
   const scoredAsset = enrichAssetWithScore(
     asset,
     preferences,
-    snapshot.currentAllocationPct
+    snapshot.currentAllocationPct,
+    snapshot.currentMarketValue,
+    snapshot.ownedQuantity,
   );
 
   return {
@@ -196,22 +205,24 @@ const buildRankedAsset = (
     score: normalizeScoreExplainability(
       asset,
       scoredAsset.score,
-      snapshot.currentAllocationPct
+      snapshot.currentAllocationPct,
     ),
     ownedQuantity: snapshot.ownedQuantity,
     currentMarketValue: snapshot.currentMarketValue,
     currentAllocationPct: snapshot.currentAllocationPct,
-  } satisfies RankedAsset;
+  };
 };
 
-const sortByFinalScoreDesc = (left: RankedAsset, right: RankedAsset): number =>
-  right.score.finalScore - left.score.finalScore;
+const sortByFinalScoreDesc = (
+  left: RankedAssetWithPercentile,
+  right: RankedAssetWithPercentile,
+): number => right.score.finalScore - left.score.finalScore;
 
 export const buildRanking = (
   assets: Asset[],
   positions: PortfolioPosition[],
-  preferences: Preferences
-): RankedAsset[] => {
+  preferences: Preferences,
+): RankedAssetWithPercentile[] => {
   if (!Array.isArray(assets) || assets.length === 0) {
     return [];
   }
@@ -224,9 +235,18 @@ export const buildRanking = (
       asset,
       preferences,
       portfolioContext.positionsByTicker.get(asset.ticker),
-      portfolioContext.totalPortfolioMarketValue
-    )
+      portfolioContext.totalPortfolioMarketValue,
+    ),
   );
 
-  return rankedAssets.sort(sortByFinalScoreDesc);
+  const normalized = normalizeRanking(
+    rankedAssets.map((asset) => asset.score.finalScore),
+  );
+
+  const rankedWithPercentile = rankedAssets.map((asset, index) => ({
+    ...asset,
+    percentile: normalized[index]?.percentile ?? 0,
+  }));
+
+  return rankedWithPercentile.sort(sortByFinalScoreDesc);
 };

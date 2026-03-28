@@ -11,7 +11,6 @@ export const getScoreWeight = (
   score: number,
   concentrationPct?: number
 ): number => {
-  const normalized = clamp(score / 100);
 
   // 🔹 base contínua (0.4 → 1.4)
   let weight = 0.4 + smoothCurve(score) * 1.0;

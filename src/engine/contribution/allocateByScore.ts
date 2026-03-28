@@ -4,12 +4,10 @@ import type {
   TagKey,
 } from '../../domain/types';
 
-type ContributionTag = TagKey;
-
-type AllocationOptions = {
+interface AllocationOptions {
   totalAmount: number;
   maxPerAssetPct?: number;
-};
+}
 
 type AllocationCandidate = {
   asset: RankedAsset;
@@ -19,9 +17,6 @@ type AllocationCandidate = {
 };
 
 const DEFAULT_MAX_PER_ASSET_PCT = 0.35;
-const MIN_ELIGIBLE_SCORE = 50;
-const MAX_POSITION_ALLOCATION_PCT = 20;
-const UNDERWEIGHT_THRESHOLD_PCT = 10;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
@@ -29,46 +24,10 @@ const clamp = (value: number, min: number, max: number): number =>
 const isFinitePositiveNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0;
 
-const normalizeText = (value: unknown): string =>
-  String(value ?? '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-
-const getCurrentAllocationPct = (asset: RankedAsset): number =>
-  typeof asset.currentAllocationPct === 'number' &&
-  Number.isFinite(asset.currentAllocationPct)
-    ? asset.currentAllocationPct
-    : 0;
-
 const getPercentile = (asset: RankedAsset): number =>
   typeof asset.percentile === 'number' && Number.isFinite(asset.percentile)
     ? asset.percentile
     : 50;
-
-const isEligibleAsset = (asset: RankedAsset): boolean => {
-  if (!isFinitePositiveNumber(asset.price)) {
-    return false;
-  }
-
-  if (
-    typeof asset.score?.finalScore !== 'number' ||
-    !Number.isFinite(asset.score.finalScore)
-  ) {
-    return false;
-  }
-
-  if (asset.score.finalScore < MIN_ELIGIBLE_SCORE) {
-    return false;
-  }
-
-  if (getCurrentAllocationPct(asset) >= MAX_POSITION_ALLOCATION_PCT) {
-    return false;
-  }
-
-  return true;
-};
 
 const buildAllocationCandidates = (
   assets: RankedAsset[],
@@ -86,60 +45,48 @@ const buildAllocationCandidates = (
     };
   });
 
-const buildTags = (asset: RankedAsset): ContributionTag[] => {
-  const tags: ContributionTag[] = [];
-  const recommendation = normalizeText(asset.score?.recommendation);
-  const confidence = normalizeText(asset.score?.confidence);
+const buildTags = (asset: RankedAsset): TagKey[] => {
+  const tags: TagKey[] = [];
   const percentile = getPercentile(asset);
 
-  if (recommendation.includes('forte compra') || percentile >= 90) {
+  if (percentile >= 90) {
     tags.push('strongBuy');
   }
 
-  if (confidence.includes('alta') || asset.score.finalScore >= 80) {
+  if (asset.score.finalScore >= 80) {
     tags.push('highConfidence');
   }
 
-  if (getCurrentAllocationPct(asset) < UNDERWEIGHT_THRESHOLD_PCT) {
+  if (asset.currentAllocationPct < 5) {
     tags.push('underweight');
   }
 
   return tags;
 };
 
-const buildRationale = (asset: RankedAsset, tags: ContributionTag[]): string => {
-  const parts: string[] = [];
-
+const buildRationale = (asset: RankedAsset): string => {
   if ((asset.percentile ?? 0) >= 85) {
-    parts.push('alta prioridade no ranking relativo');
+    return 'Alta prioridade no ranking relativo';
   }
 
-  if (asset.score?.recommendation) {
-    parts.push(asset.score.recommendation);
+  if (asset.currentAllocationPct < 5) {
+    return 'Baixa exposição atual na carteira';
   }
 
-  if (asset.score?.confidence) {
-    parts.push(`confiança ${String(asset.score.confidence).toLowerCase()}`);
-  }
-
-  if (tags.includes('underweight')) {
-    parts.push('baixa exposição atual na carteira');
-  }
-
-  if (parts.length === 0) {
-    parts.push('alocação otimizada por score e percentil');
-  }
-
-  return parts.join(' · ');
+  return 'Alocação otimizada por score e percentil';
 };
 
-const allocateByScore = (
+export const allocateByScore = (
   assets: RankedAsset[],
   options: AllocationOptions,
 ): ContributionSuggestion[] => {
   const { totalAmount, maxPerAssetPct = DEFAULT_MAX_PER_ASSET_PCT } = options;
 
-  if (!assets.length || totalAmount <= 0) {
+  if (!Array.isArray(assets) || assets.length === 0) {
+    return [];
+  }
+
+  if (!isFinitePositiveNumber(totalAmount)) {
     return [];
   }
 
@@ -161,14 +108,13 @@ const allocateByScore = (
     const suggestedAmount = Number(
       (suggestedShares * candidate.asset.price).toFixed(2),
     );
-    const tags = buildTags(candidate.asset);
 
     return {
       ticker: candidate.asset.ticker,
       suggestedAmount,
       suggestedShares,
-      rationale: buildRationale(candidate.asset, tags),
-      tags,
+      rationale: buildRationale(candidate.asset),
+      tags: buildTags(candidate.asset),
     } satisfies ContributionSuggestion;
   });
 
@@ -188,27 +134,4 @@ const allocateByScore = (
   return suggestions
     .filter((suggestion) => suggestion.suggestedAmount > 0)
     .sort((left, right) => right.suggestedAmount - left.suggestedAmount);
-};
-
-export const calculateContribution = (
-  ranking: RankedAsset[],
-  monthlyContribution: number,
-): ContributionSuggestion[] => {
-  if (!Array.isArray(ranking) || ranking.length === 0) {
-    return [];
-  }
-
-  if (!isFinitePositiveNumber(monthlyContribution)) {
-    return [];
-  }
-
-  const eligibleAssets = ranking.filter(isEligibleAsset);
-
-  if (eligibleAssets.length === 0) {
-    return [];
-  }
-
-  return allocateByScore(eligibleAssets, {
-    totalAmount: monthlyContribution,
-  });
 };
