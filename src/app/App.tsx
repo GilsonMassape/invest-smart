@@ -1,4 +1,5 @@
 import type { ChangeEvent } from 'react';
+import { Dashboard } from '../components/dashboard/Dashboard';
 import { StatGrid } from '../components/common/StatGrid';
 import { ContributionSection } from '../components/contribution/ContributionSection';
 import { B3ImportButton } from '../components/import/B3ImportButton';
@@ -48,11 +49,14 @@ const App = () => {
           </h1>
           <p className="muted">
             App modular em React + TypeScript, com engine separada, simulação de
-            aporte e rebalanceamento.
+            aporte, rebalanceamento e sincronização em nuvem.
           </p>
         </div>
 
-        <section className="preferences-panel" aria-label="Preferências da carteira">
+        <section
+          className="preferences-panel"
+          aria-label="Preferências da carteira"
+        >
           <label>
             Perfil
             <select
@@ -87,6 +91,15 @@ const App = () => {
           />
         </section>
       </header>
+
+      <Dashboard
+  totalPatrimony={vm.dashboard.totalInvested}
+  distributionByType={vm.dashboard.distributionByType}
+  distributionByAsset={vm.dashboard.distributionByAsset}
+  concentrationData={vm.dashboard.concentrationData}
+  performanceData={vm.dashboard.performanceData}
+  evolutionData={vm.dashboard.evolutionData}
+/>
 
       <StatGrid
         totalInvested={vm.dashboard.totalInvested}

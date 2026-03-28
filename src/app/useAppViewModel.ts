@@ -23,6 +23,22 @@ type PersistentState = PersistentAppState['state'];
 type PersistentActions = PersistentAppState['actions'];
 type PortfolioData = ReturnType<typeof usePortfolioData>;
 
+type DashboardTypePoint = {
+  name: string;
+  value: number;
+};
+
+type DashboardAssetPoint = {
+  symbol: string;
+  value: number;
+  percentage: number;
+};
+
+type DashboardMetricPoint = {
+  name: string;
+  value: number;
+};
+
 export interface HeaderViewModel {
   riskProfile: RiskProfile;
   macroScenario: MacroScenario;
@@ -34,6 +50,12 @@ export interface DashboardViewModel {
   totalInvested: number;
   monthlyContribution: number;
   rankedCount: number;
+  totalPatrimony: number;
+  distributionByType: DashboardTypePoint[];
+  distributionByAsset: DashboardAssetPoint[];
+  concentrationData: DashboardAssetPoint[];
+  performanceData: DashboardMetricPoint[];
+  evolutionData: DashboardMetricPoint[];
 }
 
 export interface ContributionViewModel {
@@ -71,6 +93,118 @@ export interface AppViewModel {
   rebalance: RebalanceViewModel;
 }
 
+type AssetCatalogMap = Map<string, Asset>;
+
+const toSafeNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeTicker = (value: string): string => value.trim().toUpperCase();
+
+const buildAssetCatalogMap = (assets: Asset[]): AssetCatalogMap =>
+  new Map(assets.map((asset) => [normalizeTicker(asset.ticker), asset]));
+
+const resolveAssetTypeLabel = (
+  assetCatalog: AssetCatalogMap,
+  ticker: string,
+): string => {
+  const asset = assetCatalog.get(normalizeTicker(ticker));
+
+  if (!asset) {
+    return 'Outros';
+  }
+
+  const rawType =
+    'type' in asset
+      ? (asset as Asset & { type?: string }).type
+      : undefined;
+
+  return rawType && rawType.trim() ? rawType : 'Outros';
+};
+
+const toBasePortfolioPositions = (
+  portfolio: PortfolioData['portfolio'],
+): PortfolioPosition[] =>
+  portfolio.map((position) => ({
+    ticker: position.ticker,
+    quantity: position.quantity,
+    avgPrice: position.avgPrice,
+  }));
+
+const buildDistributionByAsset = (
+  portfolio: PortfolioData['portfolio'],
+  totalPatrimony: number,
+): DashboardAssetPoint[] => {
+  const safeTotalPatrimony = toSafeNumber(totalPatrimony);
+
+  return portfolio
+    .map((position) => {
+      const quantity = toSafeNumber(position.quantity);
+      const avgPrice = toSafeNumber(position.avgPrice);
+      const value = quantity * avgPrice;
+      const percentage =
+        safeTotalPatrimony > 0 ? (value / safeTotalPatrimony) * 100 : 0;
+
+      return {
+        symbol: position.ticker,
+        value,
+        percentage,
+      };
+    })
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value);
+};
+
+const buildDistributionByType = (
+  portfolio: PortfolioData['portfolio'],
+  assetCatalog: AssetCatalogMap,
+): DashboardTypePoint[] => {
+  const typeAccumulator = new Map<string, number>();
+
+  for (const position of portfolio) {
+    const quantity = toSafeNumber(position.quantity);
+    const avgPrice = toSafeNumber(position.avgPrice);
+    const patrimonyValue = quantity * avgPrice;
+
+    if (patrimonyValue <= 0) {
+      continue;
+    }
+
+    const typeLabel = resolveAssetTypeLabel(assetCatalog, position.ticker);
+
+    typeAccumulator.set(
+      typeLabel,
+      (typeAccumulator.get(typeLabel) ?? 0) + patrimonyValue,
+    );
+  }
+
+  return Array.from(typeAccumulator.entries())
+    .map(([name, value]) => ({ name, value }))
+    .sort((a, b) => b.value - a.value);
+};
+
+const buildPerformanceData = (
+  totalInvested: number,
+  totalPatrimony: number,
+): DashboardMetricPoint[] => [
+  {
+    name: 'Investido',
+    value: toSafeNumber(totalInvested),
+  },
+  {
+    name: 'Patrimônio',
+    value: toSafeNumber(totalPatrimony),
+  },
+];
+
+const buildEvolutionData = (totalPatrimony: number): DashboardMetricPoint[] => [
+  {
+    name: 'Atual',
+    value: toSafeNumber(totalPatrimony),
+  },
+];
+
 const createHeaderViewModel = (
   state: PersistentState,
   actions: PersistentActions,
@@ -81,15 +215,41 @@ const createHeaderViewModel = (
   onMacroScenarioChange: actions.updateMacroScenario,
 });
 
-const createDashboardViewModel = (
-  state: PersistentState,
-  rankedCount: number,
-  totalInvested: number,
-): DashboardViewModel => ({
-  totalInvested,
-  monthlyContribution: state.monthlyContribution,
+const createDashboardViewModel = ({
+  state,
+  portfolio,
   rankedCount,
-});
+  totalInvested,
+  assetCatalog,
+}: {
+  state: PersistentState;
+  portfolio: PortfolioData['portfolio'];
+  rankedCount: number;
+  totalInvested: number;
+  assetCatalog: AssetCatalogMap;
+}): DashboardViewModel => {
+  const totalPatrimony = toSafeNumber(totalInvested);
+  const distributionByAsset = buildDistributionByAsset(
+    portfolio,
+    totalPatrimony,
+  );
+  const distributionByType = buildDistributionByType(portfolio, assetCatalog);
+  const concentrationData = distributionByAsset.slice(0, 10);
+  const performanceData = buildPerformanceData(totalInvested, totalPatrimony);
+  const evolutionData = buildEvolutionData(totalPatrimony);
+
+  return {
+    totalInvested,
+    monthlyContribution: state.monthlyContribution,
+    rankedCount,
+    totalPatrimony,
+    distributionByType,
+    distributionByAsset,
+    concentrationData,
+    performanceData,
+    evolutionData,
+  };
+};
 
 const createContributionViewModel = (
   state: PersistentState,
@@ -100,15 +260,6 @@ const createContributionViewModel = (
   contribution,
   onMonthlyContributionChange: actions.updateMonthlyContribution,
 });
-
-const toBasePortfolioPositions = (
-  portfolio: PortfolioData['portfolio'],
-): PortfolioPosition[] =>
-  portfolio.map((position) => ({
-    ticker: position.ticker,
-    quantity: position.quantity,
-    avgPrice: position.avgPrice,
-  }));
 
 export const useAppViewModel = (): AppViewModel => {
   const { state, actions } = usePersistentAppState();
@@ -121,6 +272,11 @@ export const useAppViewModel = (): AppViewModel => {
     rebalance,
     alerts,
   } = usePortfolioData(state);
+
+  const assetCatalog = useMemo<AssetCatalogMap>(
+    () => buildAssetCatalogMap(ASSETS),
+    [],
+  );
 
   const currentPortfolioPositions = useMemo<PortfolioPosition[]>(
     () => toBasePortfolioPositions(portfolio),
@@ -147,21 +303,18 @@ export const useAppViewModel = (): AppViewModel => {
 
   const dashboardViewModel = useMemo<DashboardViewModel>(
     () =>
-      createDashboardViewModel(
+      createDashboardViewModel({
         state,
-        ranking.length,
+        portfolio,
+        rankedCount: ranking.length,
         totalInvested,
-      ),
-    [ranking.length, state, totalInvested],
+        assetCatalog,
+      }),
+    [assetCatalog, portfolio, ranking.length, state, totalInvested],
   );
 
   const contributionViewModel = useMemo<ContributionViewModel>(
-    () =>
-      createContributionViewModel(
-        state,
-        contribution,
-        actions,
-      ),
+    () => createContributionViewModel(state, contribution, actions),
     [actions, contribution, state],
   );
 
