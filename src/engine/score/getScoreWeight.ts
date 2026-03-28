@@ -1,36 +1,30 @@
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, value));
+const clamp = (v: number, min = 0, max = 1) =>
+  Math.min(max, Math.max(min, v));
 
-const normalizeScore = (score: number): number => {
-  if (!Number.isFinite(score)) return 0;
-  return clamp(score, 0, 100);
+// curva suave (sigmoid-like)
+const smoothCurve = (score: number): number => {
+  const x = (score - 60) / 15;
+  return 1 / (1 + Math.exp(-x));
 };
 
-// 🔹 curva contínua (sem degraus)
-const getBaseWeight = (score: number): number => {
-  // escala 0–100 → 0.4–1.4
-  return 0.4 + (score / 100);
-};
+export const getScoreWeight = (
+  score: number,
+  concentrationPct?: number
+): number => {
+  const normalized = clamp(score / 100);
 
-// 🔹 bônus para topo (convicção alta)
-const getConvictionBoost = (score: number): number => {
-  if (score >= 85) return 0.15;
-  if (score >= 75) return 0.08;
-  return 0;
-};
+  // 🔹 base contínua (0.4 → 1.4)
+  let weight = 0.4 + smoothCurve(score) * 1.0;
 
-// 🔹 penalização leve para ruins
-const getPenalty = (score: number): number => {
-  if (score < 50) return -0.1;
-  return 0;
-};
+  // 🔹 boost para elite
+  if (score > 85) weight += 0.15;
+  if (score > 92) weight += 0.10;
 
-export const getScoreWeight = (score: number): number => {
-  const safeScore = normalizeScore(score);
+  // 🔻 penalidade por concentração
+  if (concentrationPct !== undefined) {
+    if (concentrationPct > 25) weight *= 0.7;
+    else if (concentrationPct > 18) weight *= 0.85;
+  }
 
-  const base = getBaseWeight(safeScore);
-  const boost = getConvictionBoost(safeScore);
-  const penalty = getPenalty(safeScore);
-
-  return clamp(base + boost + penalty, 0.3, 1.5);
+  return Number(clamp(weight, 0.3, 1.6).toFixed(2));
 };

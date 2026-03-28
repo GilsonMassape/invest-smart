@@ -246,7 +246,7 @@ export const getAssetScore = (
     macroAdjustment: Number(macroAdjustment.value.toFixed(2)),
     concentrationPenalty: Number(concentrationPenalty.value.toFixed(2)),
     finalScore: Number(finalScore.toFixed(2)),
-    weight: getScoreWeight(finalScore),
+    weight: getScoreWeight(finalScore, currentAllocationPct),
     recommendation: getRecommendationLabel(finalScore),
     confidence: getConfidence(asset, finalScore),
     reasons: buildReasons(
