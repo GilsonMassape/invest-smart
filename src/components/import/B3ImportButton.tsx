@@ -6,7 +6,7 @@ import type {
 } from '../../domain/import/b3Import';
 import { buildB3ImportPreview } from '../../domain/import/b3Import';
 import { parseB3ImportFile } from '../../engine/import/b3ImportService';
-import { parseB3Pdf } from '../../infra/b3/parseB3Pdf';
+import { parseB3Pdf } from '../../infra/b3pdf/parseB3Pdf';
 
 const B3ImportModal = lazy(async () => {
   const module = await import('./B3ImportModal');
