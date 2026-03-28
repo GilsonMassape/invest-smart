@@ -1,33 +1,36 @@
-const SCORE_WEIGHT_RULES = [
-  { minScore: 88, weight: 1.35 },
-  { minScore: 80, weight: 1.2 },
-  { minScore: 72, weight: 1.05 },
-  { minScore: 65, weight: 0.9 },
-  { minScore: 0, weight: 0.4 }
-] as const;
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
 
 const normalizeScore = (score: number): number => {
-  if (!Number.isFinite(score)) {
-    return 0;
-  }
+  if (!Number.isFinite(score)) return 0;
+  return clamp(score, 0, 100);
+};
 
-  if (score < 0) {
-    return 0;
-  }
+// 🔹 curva contínua (sem degraus)
+const getBaseWeight = (score: number): number => {
+  // escala 0–100 → 0.4–1.4
+  return 0.4 + (score / 100);
+};
 
-  if (score > 100) {
-    return 100;
-  }
+// 🔹 bônus para topo (convicção alta)
+const getConvictionBoost = (score: number): number => {
+  if (score >= 85) return 0.15;
+  if (score >= 75) return 0.08;
+  return 0;
+};
 
-  return score;
+// 🔹 penalização leve para ruins
+const getPenalty = (score: number): number => {
+  if (score < 50) return -0.1;
+  return 0;
 };
 
 export const getScoreWeight = (score: number): number => {
   const safeScore = normalizeScore(score);
 
-  const matchedRule = SCORE_WEIGHT_RULES.find(
-    (rule) => safeScore >= rule.minScore
-  );
+  const base = getBaseWeight(safeScore);
+  const boost = getConvictionBoost(safeScore);
+  const penalty = getPenalty(safeScore);
 
-  return matchedRule?.weight ?? 0.4;
+  return clamp(base + boost + penalty, 0.3, 1.5);
 };
