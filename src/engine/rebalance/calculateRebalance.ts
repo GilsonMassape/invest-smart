@@ -4,6 +4,8 @@ type EligibleAsset = RankedAsset & {
   safeCurrentValue: number;
   safeCurrentPct: number;
   safeWeight: number;
+  safePercentile: number;
+  targetStrength: number;
 };
 
 const MIN_POSITION_VALUE_DIFF = 50;
@@ -14,6 +16,9 @@ const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 
 const round2 = (value: number): number => Number(value.toFixed(2));
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
 
 const getSafeOwnedQuantity = (asset: RankedAsset): number =>
   isFiniteNumber(asset.ownedQuantity) && asset.ownedQuantity > 0
@@ -35,10 +40,26 @@ const getSafeWeight = (asset: RankedAsset): number => {
   return isFiniteNumber(rawWeight) && rawWeight > 0 ? rawWeight : 0;
 };
 
+const getSafePercentile = (asset: RankedAsset): number => {
+  const rawPercentile = asset.percentile;
+  return isFiniteNumber(rawPercentile) ? clamp(rawPercentile, 0, 100) : 50;
+};
+
+const getTargetStrength = (asset: RankedAsset): number => {
+  const weightFactor = getSafeWeight(asset);
+  const scoreFactor =
+    isFiniteNumber(asset.score?.finalScore) && asset.score.finalScore > 0
+      ? clamp(asset.score.finalScore / 100, 0, 1)
+      : 0;
+  const percentileFactor = clamp(getSafePercentile(asset) / 100, 0, 1);
+
+  return weightFactor * 0.5 + scoreFactor * 0.3 + percentileFactor * 0.2;
+};
+
 const isEligibleAsset = (asset: RankedAsset): asset is EligibleAsset => {
   const safeOwnedQuantity = getSafeOwnedQuantity(asset);
   const safeCurrentValue = getSafeCurrentValue(asset);
-  const safeWeight = getSafeWeight(asset);
+  const targetStrength = getTargetStrength(asset);
 
   if (safeOwnedQuantity <= 0) {
     return false;
@@ -48,27 +69,28 @@ const isEligibleAsset = (asset: RankedAsset): asset is EligibleAsset => {
     return false;
   }
 
-  if (safeWeight <= 0) {
+  if (targetStrength <= 0) {
     return false;
   }
 
   return true;
 };
 
-const buildEligibleAssets = (rankedAssets: RankedAsset[]): EligibleAsset[] => {
-  return rankedAssets
+const buildEligibleAssets = (rankedAssets: RankedAsset[]): EligibleAsset[] =>
+  rankedAssets
     .filter(isEligibleAsset)
     .map((asset) => ({
       ...asset,
       safeCurrentValue: getSafeCurrentValue(asset),
       safeCurrentPct: getSafeCurrentPct(asset),
-      safeWeight: getSafeWeight(asset)
+      safeWeight: getSafeWeight(asset),
+      safePercentile: getSafePercentile(asset),
+      targetStrength: getTargetStrength(asset),
     }));
-};
 
 const resolveAction = (
   diffValue: number,
-  diffPct: number
+  diffPct: number,
 ): RebalanceSuggestion['action'] => {
   const absDiffValue = Math.abs(diffValue);
   const absDiffPct = Math.abs(diffPct);
@@ -92,7 +114,7 @@ const resolveAction = (
 };
 
 export const calculateRebalance = (
-  rankedAssets: RankedAsset[]
+  rankedAssets: RankedAsset[],
 ): RebalanceSuggestion[] => {
   if (!Array.isArray(rankedAssets) || rankedAssets.length === 0) {
     return [];
@@ -104,23 +126,23 @@ export const calculateRebalance = (
     return [];
   }
 
-  const totalWeight = eligibleAssets.reduce(
-    (sum, asset) => sum + asset.safeWeight,
-    0
+  const totalStrength = eligibleAssets.reduce(
+    (sum, asset) => sum + asset.targetStrength,
+    0,
   );
 
   const totalValue = eligibleAssets.reduce(
     (sum, asset) => sum + asset.safeCurrentValue,
-    0
+    0,
   );
 
-  if (totalWeight <= EPSILON || totalValue <= EPSILON) {
+  if (totalStrength <= EPSILON || totalValue <= EPSILON) {
     return [];
   }
 
   return eligibleAssets
     .map((asset) => {
-      const targetPct = (asset.safeWeight / totalWeight) * 100;
+      const targetPct = (asset.targetStrength / totalStrength) * 100;
       const targetValue = (targetPct / 100) * totalValue;
 
       const diffValue = targetValue - asset.safeCurrentValue;
@@ -133,7 +155,7 @@ export const calculateRebalance = (
         currentPct: round2(asset.safeCurrentPct),
         targetPct: round2(targetPct),
         diffValue: round2(diffValue),
-        action
+        action,
       } satisfies RebalanceSuggestion;
     })
     .sort((a, b) => {
