@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { DashboardChartCard } from './DashboardChartCard';
 import { DistributionByTypeChart } from './charts/DistributionByTypeChart';
 import { DistributionByAssetChart } from './charts/DistributionByAssetChart';
@@ -21,6 +22,12 @@ export type DashboardMetricPoint = {
   value: number;
 };
 
+export type DashboardInsight = {
+  id: string;
+  message: string;
+  severity: 'info' | 'warning' | 'critical';
+};
+
 type DashboardProps = {
   totalPatrimony: number;
   distributionByType: DashboardTypePoint[];
@@ -36,10 +43,60 @@ const formatCurrency = (value: number) =>
     maximumFractionDigits: 2,
   });
 
-const formatInteger = (value: number) => value.toLocaleString('pt-BR');
-
-const sanitizeNumber = (value: number) =>
+const sanitize = (value: number) =>
   Number.isFinite(value) ? value : 0;
+
+// 🔥 ENGINE LOCAL DE INSIGHTS
+const generateInsights = (
+  total: number,
+  assets: DashboardAssetPoint[],
+): DashboardInsight[] => {
+  const insights: DashboardInsight[] = [];
+
+  if (total <= 0 || assets.length === 0) {
+    return insights;
+  }
+
+  const sorted = [...assets].sort((a, b) => b.percentage - a.percentage);
+  const top = sorted[0];
+
+  // 🔴 Concentração alta
+  if (top && top.percentage > 25) {
+    insights.push({
+      id: 'high_concentration',
+      message: `Alta concentração em ${top.symbol} (${top.percentage.toFixed(
+        1,
+      )}%)`,
+      severity: 'critical',
+    });
+  }
+
+  // 🟡 Baixa diversificação
+  if (assets.length < 5) {
+    insights.push({
+      id: 'low_diversification',
+      message: 'Carteira pouco diversificada',
+      severity: 'warning',
+    });
+  }
+
+  // 🟢 Carteira saudável
+  if (insights.length === 0) {
+    insights.push({
+      id: 'healthy',
+      message: 'Carteira equilibrada',
+      severity: 'info',
+    });
+  }
+
+  return insights;
+};
+
+const getInsightColor = (severity: DashboardInsight['severity']) => {
+  if (severity === 'critical') return '#ef4444';
+  if (severity === 'warning') return '#eab308';
+  return '#16a34a';
+};
 
 export function Dashboard({
   totalPatrimony,
@@ -49,117 +106,76 @@ export function Dashboard({
   performanceData,
   evolutionData,
 }: DashboardProps) {
-  const safeTotalPatrimony = sanitizeNumber(totalPatrimony);
-  const safeDistributionByType = Array.isArray(distributionByType)
-    ? distributionByType
-    : [];
-  const safeDistributionByAsset = Array.isArray(distributionByAsset)
+  const safeTotal = sanitize(totalPatrimony);
+  const safeAssets = Array.isArray(distributionByAsset)
     ? distributionByAsset
     : [];
-  const safeConcentrationData = Array.isArray(concentrationData)
-    ? concentrationData
-    : [];
-  const safePerformanceData = Array.isArray(performanceData)
-    ? performanceData
-    : [];
-  const safeEvolutionData = Array.isArray(evolutionData) ? evolutionData : [];
 
-  const hasAnyChartData =
-    safeTotalPatrimony > 0 ||
-    safeDistributionByType.length > 0 ||
-    safeDistributionByAsset.length > 0 ||
-    safeConcentrationData.length > 0 ||
-    safePerformanceData.length > 0 ||
-    safeEvolutionData.length > 0;
-
-  if (!hasAnyChartData) {
-    return (
-      <section
-        className="rounded-2xl bg-white p-6 shadow"
-        aria-label="Dashboard"
-      >
-        <h2 className="text-xl font-semibold">Dashboard</h2>
-        <p className="mt-4 text-center text-gray-500">
-          Sem dados para exibir o dashboard.
-        </p>
-      </section>
-    );
-  }
+  const insights = useMemo(
+    () => generateInsights(safeTotal, safeAssets),
+    [safeTotal, safeAssets],
+  );
 
   return (
-    <section
-      className="space-y-6 rounded-2xl bg-transparent"
-      aria-label="Dashboard"
-    >
-      <header className="space-y-2">
+    <section className="space-y-6" aria-label="Dashboard">
+      <header>
         <h2 className="text-xl font-semibold">Dashboard</h2>
-        <p className="text-sm text-gray-500">
-          Visão consolidada da carteira, concentração e performance.
-        </p>
       </header>
 
+      {/* 🔥 INSIGHTS */}
+      {insights.length > 0 && (
+        <section className="rounded-2xl bg-white p-4 shadow">
+          <div className="text-sm text-gray-500 mb-2">
+            Insights automáticos
+          </div>
+
+          <div className="space-y-2">
+            {insights.map((insight) => (
+              <div
+                key={insight.id}
+                style={{
+                  borderLeft: `4px solid ${getInsightColor(
+                    insight.severity,
+                  )}`,
+                  paddingLeft: '8px',
+                  fontWeight: 500,
+                }}
+              >
+                {insight.message}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* KPIs */}
+      <section className="rounded-2xl bg-white p-4 shadow">
+        <div className="text-sm text-gray-500">Patrimônio total</div>
+        <div className="mt-2 text-2xl font-bold">
+          R$ {formatCurrency(safeTotal)}
+        </div>
+      </section>
+
+      {/* CHARTS */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="text-sm text-gray-500">Patrimônio total</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            R$ {formatCurrency(safeTotalPatrimony)}
-          </div>
-        </section>
-
-        <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="text-sm text-gray-500">Resumo</div>
-          <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <div className="text-gray-500">Tipos</div>
-              <div className="font-semibold text-slate-900">
-                {formatInteger(safeDistributionByType.length)}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-gray-500">Ativos</div>
-              <div className="font-semibold text-slate-900">
-                {formatInteger(safeDistributionByAsset.length)}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-gray-500">Top concentração</div>
-              <div className="font-semibold text-slate-900">
-                {formatInteger(safeConcentrationData.length)}
-              </div>
-            </div>
-
-            <div>
-              <div className="text-gray-500">Performance</div>
-              <div className="font-semibold text-slate-900">
-                {formatInteger(safePerformanceData.length)}
-              </div>
-            </div>
-          </div>
-        </section>
-
         <DashboardChartCard title="Distribuição por tipo">
-          <DistributionByTypeChart data={safeDistributionByType} />
+          <DistributionByTypeChart data={distributionByType} />
         </DashboardChartCard>
 
         <DashboardChartCard title="Distribuição por ativo">
-          <DistributionByAssetChart data={safeDistributionByAsset} />
+          <DistributionByAssetChart data={distributionByAsset} />
         </DashboardChartCard>
 
         <DashboardChartCard title="Concentração">
-          <ConcentrationChart data={safeConcentrationData} />
+          <ConcentrationChart data={concentrationData} />
         </DashboardChartCard>
 
         <DashboardChartCard title="Performance">
-          <PerformanceChart data={safePerformanceData} />
+          <PerformanceChart data={performanceData} />
         </DashboardChartCard>
 
-        <DashboardChartCard
-          title="Evolução do patrimônio"
-          className="md:col-span-2"
-        >
-          <EvolutionChart data={safeEvolutionData} />
+        <DashboardChartCard title="Evolução" className="md:col-span-2">
+          <EvolutionChart data={evolutionData} />
         </DashboardChartCard>
       </div>
     </section>
