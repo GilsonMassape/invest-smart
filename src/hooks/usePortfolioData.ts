@@ -6,7 +6,7 @@ import type {
   PortfolioPosition,
   RankedAsset,
 } from '../domain/types';
-import { calculateContribution } from '../engine/contribution/calculateContribution';
+import { allocateByScore } from '../engine/contribution/allocateByScore';
 import { buildRanking } from '../engine/ranking/buildRanking';
 import { calculateRebalance } from '../engine/rebalance/calculateRebalance';
 import { safeDivide } from '../utils/number';
@@ -48,7 +48,7 @@ const buildAssetsMap = (assets: readonly Asset[]): Map<string, Asset> => {
 
 const buildPortfolioBaseRows = (
   positions: readonly PortfolioPosition[],
-  assetsMap: ReadonlyMap<string, Asset>
+  assetsMap: ReadonlyMap<string, Asset>,
 ): PortfolioRow[] =>
   positions.map((position) => {
     const ticker = normalizeTicker(position.ticker);
@@ -64,7 +64,7 @@ const buildPortfolioBaseRows = (
 
     const marketValue = roundCurrency(position.quantity * asset.price);
     const profit = roundCurrency(
-      (asset.price - position.avgPrice) * position.quantity
+      (asset.price - position.avgPrice) * position.quantity,
     );
 
     return {
@@ -80,24 +80,22 @@ const buildPortfolioBaseRows = (
   });
 
 const calculateTotalInvested = (portfolioRows: readonly PortfolioRow[]): number =>
-  roundCurrency(
-    portfolioRows.reduce((sum, item) => sum + item.marketValue, 0)
-  );
+  roundCurrency(portfolioRows.reduce((sum, item) => sum + item.marketValue, 0));
 
 const withAllocationPct = (
   portfolioRows: readonly PortfolioRow[],
-  totalInvested: number
+  totalInvested: number,
 ): PortfolioRow[] =>
   portfolioRows.map((item) => ({
     ...item,
     allocationPct: roundCurrency(
-      safeDivide(item.marketValue, totalInvested) * 100
+      safeDivide(item.marketValue, totalInvested) * 100,
     ),
   }));
 
 const filterRankingByType = (
   ranking: readonly RankedAsset[],
-  filterType: AppState['filterType']
+  filterType: AppState['filterType'],
 ): RankedAsset[] => {
   if (filterType === 'TODOS') {
     return [...ranking];
@@ -114,7 +112,7 @@ const buildAlerts = (ranking: readonly RankedAsset[]): string[] =>
 export const usePortfolioData = (state: AppState) => {
   const assetsMap = useMemo<ReadonlyMap<string, Asset>>(
     () => buildAssetsMap(ASSETS),
-    []
+    [],
   );
 
   return useMemo(() => {
@@ -125,10 +123,9 @@ export const usePortfolioData = (state: AppState) => {
     const totalInvested = calculateTotalInvested(portfolioBaseRows);
     const portfolio = withAllocationPct(portfolioBaseRows, totalInvested);
 
-    const contribution = calculateContribution(
-      ranking,
-      state.monthlyContribution
-    );
+    const contribution = allocateByScore(ranking, {
+      totalAmount: state.monthlyContribution,
+    });
 
     const rebalance = calculateRebalance(ranking);
     const alerts = buildAlerts(ranking);
