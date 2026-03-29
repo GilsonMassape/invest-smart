@@ -10,6 +10,10 @@ export type MacroScenario =
 
 export type FilterType = 'TODOS' | AssetType;
 
+/* =========================
+   CORE STATE
+========================= */
+
 export interface PortfolioPosition {
   ticker: string;
   quantity: number;
@@ -30,6 +34,10 @@ export interface AppState {
   preferences: Preferences;
 }
 
+/* =========================
+   ASSET DOMAIN
+========================= */
+
 export interface Asset {
   ticker: string;
   name: string;
@@ -44,6 +52,10 @@ export interface Asset {
   exposureIntl?: boolean;
   thesis?: string;
 }
+
+/* =========================
+   SCORE ENGINE
+========================= */
 
 export interface ScoreBreakdownDetail {
   macro: number;
@@ -65,6 +77,10 @@ export interface ScoreBreakdown {
   breakdown?: ScoreBreakdownDetail;
 }
 
+/* =========================
+   RANKING
+========================= */
+
 export interface RankedAsset extends Asset {
   score: ScoreBreakdown;
   ownedQuantity: number;
@@ -73,7 +89,16 @@ export interface RankedAsset extends Asset {
   percentile?: number;
 }
 
-export type TagKey = 'strongBuy' | 'highConfidence' | 'underweight';
+/* =========================
+   CONTRIBUTION
+========================= */
+
+export type TagKey =
+  | 'strongBuy'
+  | 'highConfidence'
+  | 'underweight'
+  | 'rebalance'
+  | 'opportunity';
 
 export interface ContributionSuggestion {
   ticker: string;
@@ -85,6 +110,10 @@ export interface ContributionSuggestion {
   tags?: TagKey[];
 }
 
+/* =========================
+   REBALANCE
+========================= */
+
 export type RebalanceAction = 'COMPRAR' | 'REDUZIR' | 'MANTER';
 
 export interface RebalanceSuggestion {
@@ -94,4 +123,24 @@ export interface RebalanceSuggestion {
   targetPct: number;
   diffValue: number;
   action: RebalanceAction;
+}
+
+/* =========================
+   🔥 DECISION ENGINE (NOVO)
+========================= */
+
+export type DecisionAction =
+  | 'COMPRAR_FORTE'
+  | 'COMPRAR'
+  | 'MANTER'
+  | 'REDUZIR'
+  | 'EVITAR';
+
+export type DecisionConfidence = 'ALTA' | 'MEDIA' | 'BAIXA';
+
+export interface Decision {
+  ticker: string;
+  action: DecisionAction;
+  confidence: DecisionConfidence;
+  reason: string;
 }
