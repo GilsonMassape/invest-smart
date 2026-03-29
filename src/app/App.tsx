@@ -122,11 +122,11 @@ const App = () => {
         />
 
         <RankingSection
-          ranking={vm.ranking.ranking}
-          filterType={vm.ranking.filterType}
-          onFilterTypeChange={vm.ranking.onFilterTypeChange}
-        />
-
+  ranking={vm.ranking.ranking}
+  decision={vm.ranking.decision}
+  filterType={vm.ranking.filterType}
+  onFilterTypeChange={vm.ranking.onFilterTypeChange}
+/>
         <RebalanceSection rebalance={vm.rebalance.rebalance} />
       </section>
     </main>

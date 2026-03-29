@@ -8,6 +8,7 @@ import {
 import type {
   Asset,
   ContributionSuggestion,
+  Decision,
   FilterType,
   MacroScenario,
   PortfolioPosition,
@@ -15,6 +16,7 @@ import type {
   RebalanceSuggestion,
   RiskProfile,
 } from '../domain/types';
+import { buildDecision } from '../engine/decision/buildDecision';
 import { usePersistentAppState } from '../hooks/usePersistentAppState';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 
@@ -76,6 +78,7 @@ export interface PortfolioViewModel {
 
 export interface RankingViewModel {
   ranking: RankedAsset[];
+  decision: Decision[];
   filterType: FilterType;
   onFilterTypeChange: (value: FilterType) => void;
 }
@@ -204,28 +207,26 @@ const buildEvolutionData = (totalPatrimony: number): DashboardMetricPoint[] => [
   },
 ];
 
-const buildDashboardInsights = (ranking: RankedAsset[]): string[] => {
+const buildDashboardInsights = (decision: Decision[]): string[] => {
   const insights: string[] = [];
 
-  const topAsset = ranking[0];
-  const worstAsset = ranking[ranking.length - 1];
+  const strongBuy = decision.find((item) => item.action === 'COMPRAR_FORTE');
+  const buy = decision.find((item) => item.action === 'COMPRAR');
+  const reduce = decision.find((item) => item.action === 'REDUZIR');
+  const avoid = decision.find((item) => item.action === 'EVITAR');
 
-  if (topAsset && topAsset.score.finalScore >= 80) {
-    insights.push(`Melhor oportunidade: ${topAsset.ticker}`);
+  if (strongBuy) {
+    insights.push(`Forte oportunidade: ${strongBuy.ticker}`);
+  } else if (buy) {
+    insights.push(`Melhor compra no momento: ${buy.ticker}`);
   }
 
-  if (worstAsset && worstAsset.score.finalScore < 50) {
-    insights.push(`Ativo fraco: ${worstAsset.ticker}`);
+  if (reduce) {
+    insights.push(`Reduzir exposição em ${reduce.ticker}`);
   }
 
-  const highConcentration = ranking.find((asset) => asset.currentAllocationPct > 25);
-
-  if (highConcentration) {
-    insights.push(
-      `Alta concentração em ${highConcentration.ticker} (${highConcentration.currentAllocationPct.toFixed(
-        1,
-      )}%)`,
-    );
+  if (avoid) {
+    insights.push(`Evitar ${avoid.ticker} por baixa atratividade`);
   }
 
   return insights;
@@ -247,14 +248,14 @@ const createDashboardViewModel = ({
   rankedCount,
   totalInvested,
   assetCatalog,
-  ranking,
+  decision,
 }: {
   state: PersistentState;
   portfolio: PortfolioData['portfolio'];
   rankedCount: number;
   totalInvested: number;
   assetCatalog: AssetCatalogMap;
-  ranking: RankedAsset[];
+  decision: Decision[];
 }): DashboardViewModel => {
   const totalPatrimony = toSafeNumber(totalInvested);
   const distributionByAsset = buildDistributionByAsset(
@@ -265,7 +266,7 @@ const createDashboardViewModel = ({
   const concentrationData = distributionByAsset.slice(0, 10);
   const performanceData = buildPerformanceData(totalInvested, totalPatrimony);
   const evolutionData = buildEvolutionData(totalPatrimony);
-  const insights = buildDashboardInsights(ranking);
+  const insights = buildDashboardInsights(decision);
 
   return {
     totalInvested,
@@ -303,6 +304,8 @@ export const useAppViewModel = (): AppViewModel => {
     alerts,
   } = usePortfolioData(state);
 
+  const decision = useMemo<Decision[]>(() => buildDecision(ranking), [ranking]);
+
   const assetCatalog = useMemo<AssetCatalogMap>(
     () => buildAssetCatalogMap(ASSETS),
     [],
@@ -339,9 +342,9 @@ export const useAppViewModel = (): AppViewModel => {
         rankedCount: ranking.length,
         totalInvested,
         assetCatalog,
-        ranking,
+        decision,
       }),
-    [assetCatalog, portfolio, ranking, state, totalInvested],
+    [assetCatalog, decision, portfolio, ranking.length, state, totalInvested],
   );
 
   const contributionViewModel = useMemo<ContributionViewModel>(
@@ -370,10 +373,11 @@ export const useAppViewModel = (): AppViewModel => {
   const rankingViewModel = useMemo<RankingViewModel>(
     () => ({
       ranking,
+      decision,
       filterType: state.filterType,
       onFilterTypeChange: actions.updateFilterType,
     }),
-    [actions.updateFilterType, ranking, state.filterType],
+    [actions.updateFilterType, decision, ranking, state.filterType],
   );
 
   const rebalanceViewModel = useMemo<RebalanceViewModel>(
