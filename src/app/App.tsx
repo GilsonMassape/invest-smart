@@ -6,6 +6,7 @@ import { B3ImportButton } from '../components/import/B3ImportButton';
 import { PortfolioSection } from '../components/portfolio/PortfolioSection';
 import { RankingSection } from '../components/ranking/RankingSection';
 import { RebalanceSection } from '../components/rebalance/RebalanceSection';
+import WhatToDoNowSection from '../components/decision/WhatToDoNowSection';
 import type { MacroScenario, RiskProfile } from '../domain/types';
 import { useAppViewModel } from './useAppViewModel';
 
@@ -108,6 +109,9 @@ const App = () => {
         rankedCount={vm.dashboard.rankedCount}
       />
 
+      {/* 🔥 NOVA SEÇÃO — AÇÃO IMEDIATA */}
+      <WhatToDoNowSection decisions={vm.ranking.decision} />
+
       <ContributionSection
         monthlyContribution={vm.contribution.monthlyContribution}
         contribution={vm.contribution.contribution}
@@ -122,11 +126,12 @@ const App = () => {
         />
 
         <RankingSection
-  ranking={vm.ranking.ranking}
-  decision={vm.ranking.decision}
-  filterType={vm.ranking.filterType}
-  onFilterTypeChange={vm.ranking.onFilterTypeChange}
-/>
+          ranking={vm.ranking.ranking}
+          decision={vm.ranking.decision}
+          filterType={vm.ranking.filterType}
+          onFilterTypeChange={vm.ranking.onFilterTypeChange}
+        />
+
         <RebalanceSection rebalance={vm.rebalance.rebalance} />
       </section>
     </main>
