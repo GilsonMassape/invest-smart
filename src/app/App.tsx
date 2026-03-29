@@ -93,13 +93,14 @@ const App = () => {
       </header>
 
       <Dashboard
-  totalPatrimony={vm.dashboard.totalInvested}
-  distributionByType={vm.dashboard.distributionByType}
-  distributionByAsset={vm.dashboard.distributionByAsset}
-  concentrationData={vm.dashboard.concentrationData}
-  performanceData={vm.dashboard.performanceData}
-  evolutionData={vm.dashboard.evolutionData}
-/>
+        totalPatrimony={vm.dashboard.totalPatrimony}
+        distributionByType={vm.dashboard.distributionByType}
+        distributionByAsset={vm.dashboard.distributionByAsset}
+        concentrationData={vm.dashboard.concentrationData}
+        performanceData={vm.dashboard.performanceData}
+        evolutionData={vm.dashboard.evolutionData}
+        insights={vm.dashboard.insights}
+      />
 
       <StatGrid
         totalInvested={vm.dashboard.totalInvested}

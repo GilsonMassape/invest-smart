@@ -56,6 +56,7 @@ export interface DashboardViewModel {
   concentrationData: DashboardAssetPoint[];
   performanceData: DashboardMetricPoint[];
   evolutionData: DashboardMetricPoint[];
+  insights: string[];
 }
 
 export interface ContributionViewModel {
@@ -116,9 +117,7 @@ const resolveAssetTypeLabel = (
   }
 
   const rawType =
-    'type' in asset
-      ? (asset as Asset & { type?: string }).type
-      : undefined;
+    'type' in asset ? (asset as Asset & { type?: string }).type : undefined;
 
   return rawType && rawType.trim() ? rawType : 'Outros';
 };
@@ -205,6 +204,33 @@ const buildEvolutionData = (totalPatrimony: number): DashboardMetricPoint[] => [
   },
 ];
 
+const buildDashboardInsights = (ranking: RankedAsset[]): string[] => {
+  const insights: string[] = [];
+
+  const topAsset = ranking[0];
+  const worstAsset = ranking[ranking.length - 1];
+
+  if (topAsset && topAsset.score.finalScore >= 80) {
+    insights.push(`Melhor oportunidade: ${topAsset.ticker}`);
+  }
+
+  if (worstAsset && worstAsset.score.finalScore < 50) {
+    insights.push(`Ativo fraco: ${worstAsset.ticker}`);
+  }
+
+  const highConcentration = ranking.find((asset) => asset.currentAllocationPct > 25);
+
+  if (highConcentration) {
+    insights.push(
+      `Alta concentração em ${highConcentration.ticker} (${highConcentration.currentAllocationPct.toFixed(
+        1,
+      )}%)`,
+    );
+  }
+
+  return insights;
+};
+
 const createHeaderViewModel = (
   state: PersistentState,
   actions: PersistentActions,
@@ -221,12 +247,14 @@ const createDashboardViewModel = ({
   rankedCount,
   totalInvested,
   assetCatalog,
+  ranking,
 }: {
   state: PersistentState;
   portfolio: PortfolioData['portfolio'];
   rankedCount: number;
   totalInvested: number;
   assetCatalog: AssetCatalogMap;
+  ranking: RankedAsset[];
 }): DashboardViewModel => {
   const totalPatrimony = toSafeNumber(totalInvested);
   const distributionByAsset = buildDistributionByAsset(
@@ -237,6 +265,7 @@ const createDashboardViewModel = ({
   const concentrationData = distributionByAsset.slice(0, 10);
   const performanceData = buildPerformanceData(totalInvested, totalPatrimony);
   const evolutionData = buildEvolutionData(totalPatrimony);
+  const insights = buildDashboardInsights(ranking);
 
   return {
     totalInvested,
@@ -248,6 +277,7 @@ const createDashboardViewModel = ({
     concentrationData,
     performanceData,
     evolutionData,
+    insights,
   };
 };
 
@@ -309,8 +339,9 @@ export const useAppViewModel = (): AppViewModel => {
         rankedCount: ranking.length,
         totalInvested,
         assetCatalog,
+        ranking,
       }),
-    [assetCatalog, portfolio, ranking.length, state, totalInvested],
+    [assetCatalog, portfolio, ranking, state, totalInvested],
   );
 
   const contributionViewModel = useMemo<ContributionViewModel>(
