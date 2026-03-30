@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { ASSETS } from '../data/assets';
 import {
   resolveB3ImportPositions,
@@ -19,6 +19,7 @@ import type {
 import { buildDecision } from '../engine/decision/buildDecision';
 import { usePersistentAppState } from '../hooks/usePersistentAppState';
 import { usePortfolioData } from '../hooks/usePortfolioData';
+import { fetchPrices } from '../services/priceService';
 
 type PersistentAppState = ReturnType<typeof usePersistentAppState>;
 type PersistentState = PersistentAppState['state'];
@@ -138,24 +139,30 @@ const buildDistributionByAsset = (
   portfolio: PortfolioData['portfolio'],
   totalPatrimony: number,
 ): DashboardAssetPoint[] => {
-  const safeTotalPatrimony = toSafeNumber(totalPatrimony);
-
-  return portfolio
+  const items = portfolio
     .map((position) => {
       const quantity = toSafeNumber(position.quantity);
-      const avgPrice = toSafeNumber(position.avgPrice);
-      const value = quantity * avgPrice;
-      const percentage =
-        safeTotalPatrimony > 0 ? (value / safeTotalPatrimony) * 100 : 0;
+      const marketPrice = toSafeNumber(position.avgPrice);
+      const value = quantity * marketPrice;
 
       return {
         symbol: position.ticker,
         value,
-        percentage,
+        percentage: 0,
       };
     })
     .filter((item) => item.value > 0)
     .sort((a, b) => b.value - a.value);
+
+  const patrimony = items.reduce((sum, item) => sum + item.value, 0);
+  const safeTotalPatrimony =
+    patrimony > 0 ? patrimony : toSafeNumber(totalPatrimony);
+
+  return items.map((item) => ({
+    ...item,
+    percentage:
+      safeTotalPatrimony > 0 ? (item.value / safeTotalPatrimony) * 100 : 0,
+  }));
 };
 
 const buildDistributionByType = (
@@ -303,6 +310,42 @@ export const useAppViewModel = (): AppViewModel => {
     rebalance,
     alerts,
   } = usePortfolioData(state);
+
+  useEffect(() => {
+    const tickers = portfolio.map((position) => position.ticker);
+
+    if (tickers.length === 0) {
+      return;
+    }
+
+    fetchPrices(tickers)
+      .then((prices) => {
+        console.log('✅ preços recebidos', prices);
+
+        const positionsToUpdate = portfolio.filter((position) => {
+          const marketPrice = prices[position.ticker];
+
+          return (
+            typeof marketPrice === 'number' &&
+            marketPrice > 0 &&
+            marketPrice !== position.avgPrice
+          );
+        });
+
+        for (const position of positionsToUpdate) {
+          const marketPrice = prices[position.ticker];
+
+          actions.upsertPosition({
+            ticker: position.ticker,
+            quantity: position.quantity,
+            avgPrice: marketPrice,
+          });
+        }
+      })
+      .catch((error) => {
+        console.error('❌ erro ao buscar preços', error);
+      });
+  }, [actions, portfolio]);
 
   const decision = useMemo<Decision[]>(() => buildDecision(ranking), [ranking]);
 
