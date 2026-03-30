@@ -1,5 +1,5 @@
-import { supabase } from '../infra/supabase/supabaseClient'
 import { Session, AuthChangeEvent } from '@supabase/supabase-js'
+import { supabase } from '../infra/supabase/supabaseClient'
 
 export const authService = {
   async getSession(): Promise<Session | null> {
@@ -29,5 +29,11 @@ export const authService = {
 
   async signOut() {
     return supabase.auth.signOut()
+  },
+
+  async updatePassword(password: string) {
+    return supabase.auth.updateUser({
+      password
+    })
   }
 }
