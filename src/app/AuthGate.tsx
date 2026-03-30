@@ -1,135 +1,66 @@
-import { useEffect, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import {
-  getCurrentSession,
-  onAuthStateChange,
-  recoverSessionFromUrl,
-  signInWithMagicLink,
-  signOut,
-} from '../services/auth';
+import { useEffect, useState } from 'react'
+import { Session } from '@supabase/supabase-js'
+import { authService } from '../services/authService'
+import { AuthScreen } from '../components/auth/AuthScreen'
 
 type AuthGateProps = {
-  children: React.ReactNode;
-};
+  children: React.ReactNode
+}
 
-export const AuthGate = ({ children }: AuthGateProps) => {
-  const [session, setSession] = useState<Session | null>(null);
-  const [email, setEmail] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-  const [message, setMessage] = useState('');
+export function AuthGate({ children }: AuthGateProps) {
+  const [session, setSession] = useState<Session | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true
 
-    const bootstrap = async () => {
-      await recoverSessionFromUrl();
-      const { data } = await getCurrentSession();
+    async function initialize() {
+      try {
+        const currentSession = await authService.getSession()
 
-      if (mounted) {
-        setSession(data.session ?? null);
-        setLoading(false);
+        if (isMounted) {
+          setSession(currentSession)
+          setIsLoading(false)
+        }
+      } catch {
+        if (isMounted) {
+          setSession(null)
+          setIsLoading(false)
+        }
       }
-    };
-
-    bootstrap();
-
-    const { data: subscription } = onAuthStateChange(
-      async (_event, nextSession) => {
-        if (!mounted) return;
-        setSession(nextSession);
-        setLoading(false);
-      }
-    );
-
-    return () => {
-      mounted = false;
-      subscription.subscription.unsubscribe();
-    };
-  }, []);
-
-  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setSending(true);
-    setMessage('');
-
-    const { error } = await signInWithMagicLink(email);
-
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage('Link de acesso enviado para seu e-mail.');
     }
 
-    setSending(false);
-  };
+    initialize()
 
-  const handleLogout = async () => {
-    await signOut();
-  };
+    const { data: listener } = authService.onAuthStateChange((_event, newSession) => {
+      setSession(newSession)
+    })
 
-  if (loading) {
-    return <div className="page">Carregando autenticação...</div>;
-  }
+    return () => {
+      isMounted = false
+      listener?.subscription.unsubscribe()
+    }
+  }, [])
 
-  if (!session) {
+  // Loading inicial (evita flicker)
+  if (isLoading) {
     return (
-      <main className="page">
-        <section className="card" style={{ maxWidth: 520, margin: '48px auto' }}>
-          <div className="card-header">
-            <div>
-              <p className="eyebrow">Invest Smart</p>
-              <h2>Entrar no Invest Smart</h2>
-              <p className="muted">
-                Use seu e-mail para receber um link seguro de acesso.
-              </p>
-            </div>
-          </div>
-
-          <form onSubmit={handleLogin} className="preferences-panel">
-            <label>
-              E-mail
-              <input
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="voce@exemplo.com"
-                required
-              />
-            </label>
-
-            <button type="submit" disabled={sending}>
-              {sending ? 'Enviando...' : 'Receber link de acesso'}
-            </button>
-
-            {message ? <p className="muted">{message}</p> : null}
-          </form>
-        </section>
-      </main>
-    );
+      <div style={{
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <span>Carregando...</span>
+      </div>
+    )
   }
 
-  return (
-    <>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '16px 24px',
-          borderBottom: '1px solid #e2e8f0',
-          background: '#ffffff',
-        }}
-      >
-        <div>
-          <strong>{session.user.email}</strong>
-          <div className="muted">Sessão autenticada</div>
-        </div>
+  // Não autenticado → bloqueia app
+  if (!session) {
+    return <AuthScreen />
+  }
 
-        <button onClick={handleLogout}>Sair</button>
-      </div>
-
-      {children}
-    </>
-  );
-};
+  // Autenticado → libera app
+  return <>{children}</>
+}
