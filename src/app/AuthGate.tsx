@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import { authService } from '../services/authService'
 import { AuthScreen } from '../components/auth/AuthScreen'
@@ -11,22 +11,62 @@ type AuthGateProps = {
 export function AuthGate({ children }: AuthGateProps) {
   const [session, setSession] = useState<Session | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [authEvent, setAuthEvent] = useState<AuthChangeEvent | null>(null)
+  const [isRecoveryFlow, setIsRecoveryFlow] = useState(false)
+  const recoveryDetectedRef = useRef(false)
 
   useEffect(() => {
     let isMounted = true
+
+    const initialUrl = window.location.href.toLowerCase()
+    const hasRecoveryInUrl =
+      initialUrl.includes('type=recovery') ||
+      initialUrl.includes('type=invite') ||
+      initialUrl.includes('access_token=')
+
+    if (hasRecoveryInUrl) {
+      recoveryDetectedRef.current = true
+      setIsRecoveryFlow(true)
+    }
+
+    const {
+      data: { subscription }
+    } = authService.onAuthStateChange((event: AuthChangeEvent, newSession) => {
+      if (!isMounted) return
+
+      if (event === 'PASSWORD_RECOVERY') {
+        recoveryDetectedRef.current = true
+        setIsRecoveryFlow(true)
+        setSession(newSession)
+        setIsLoading(false)
+        return
+      }
+
+      setSession(newSession)
+
+      if (!recoveryDetectedRef.current) {
+        setIsRecoveryFlow(false)
+      }
+
+      setIsLoading(false)
+    })
 
     async function initialize() {
       try {
         const currentSession = await authService.getSession()
 
-        if (isMounted) {
-          setSession(currentSession)
+        if (!isMounted) return
+
+        setSession(currentSession)
+
+        if (!recoveryDetectedRef.current) {
           setIsLoading(false)
         }
       } catch {
-        if (isMounted) {
-          setSession(null)
+        if (!isMounted) return
+
+        setSession(null)
+
+        if (!recoveryDetectedRef.current) {
           setIsLoading(false)
         }
       }
@@ -34,30 +74,11 @@ export function AuthGate({ children }: AuthGateProps) {
 
     void initialize()
 
-    const {
-      data: { subscription }
-    } = authService.onAuthStateChange((event, newSession) => {
-      setAuthEvent(event)
-      setSession(newSession)
-      setIsLoading(false)
-    })
-
     return () => {
       isMounted = false
       subscription.unsubscribe()
     }
   }, [])
-
-  const isRecoveryFlow = useMemo(() => {
-    const hash = window.location.hash.toLowerCase()
-    const search = window.location.search.toLowerCase()
-
-    return (
-      authEvent === 'PASSWORD_RECOVERY' ||
-      hash.includes('type=recovery') ||
-      search.includes('type=recovery')
-    )
-  }, [authEvent])
 
   if (isLoading) {
     return (
@@ -75,7 +96,13 @@ export function AuthGate({ children }: AuthGateProps) {
   }
 
   if (isRecoveryFlow && session) {
-    return <ResetPasswordScreen />
+    return (
+      <ResetPasswordScreen
+        onSuccess={() => {
+          setIsRecoveryFlow(false)
+        }}
+      />
+    )
   }
 
   if (!session) {
