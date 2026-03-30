@@ -1,52 +1,51 @@
-import { DashboardChartCard } from './DashboardChartCard';
-import { DistributionByTypeChart } from './charts/DistributionByTypeChart';
-import { DistributionByAssetChart } from './charts/DistributionByAssetChart';
-import { ConcentrationChart } from './charts/ConcentrationChart';
-import { PerformanceChart } from './charts/PerformanceChart';
-import { EvolutionChart } from './charts/EvolutionChart';
+import {
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip
+} from 'recharts'
 
-export type DashboardTypePoint = {
-  name: string;
-  value: number;
-};
-
-export type DashboardAssetPoint = {
-  symbol: string;
-  value: number;
-  percentage: number;
-};
-
-export type DashboardMetricPoint = {
-  name: string;
-  value: number;
-};
+type DashboardGenericPoint = {
+  value: number
+  type?: string
+  ticker?: string
+  label?: string
+  name?: string
+}
 
 type DashboardProps = {
-  totalPatrimony: number;
-  distributionByType: DashboardTypePoint[];
-  distributionByAsset: DashboardAssetPoint[];
-  concentrationData: DashboardAssetPoint[];
-  performanceData: DashboardMetricPoint[];
-  evolutionData: DashboardMetricPoint[];
-  insights: string[];
-};
+  totalPatrimony: number
+  distributionByType: DashboardGenericPoint[]
+  distributionByAsset: DashboardGenericPoint[]
+  concentrationData: DashboardGenericPoint[]
+  performanceData: DashboardGenericPoint[]
+  evolutionData: DashboardGenericPoint[]
+  insights: string[]
+}
 
-const formatCurrency = (value: number) =>
-  value.toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+const numberFormatter = new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL'
+})
 
-const sanitizeNumber = (value: number) =>
-  Number.isFinite(value) ? value : 0;
+const percentageFormatter = new Intl.NumberFormat('pt-BR', {
+  maximumFractionDigits: 1
+})
 
-const getInsightColor = (insight: string) => {
-  const normalized = insight.toLowerCase();
+const chartColors = [
+  '#2563eb',
+  '#0f172a',
+  '#16a34a',
+  '#d97706',
+  '#7c3aed',
+  '#dc2626'
+]
 
-  if (normalized.includes('alta concentração')) return '#ef4444';
-  if (normalized.includes('ativo fraco')) return '#f59e0b';
-  return '#16a34a';
-};
+function getPointLabel(point: DashboardGenericPoint): string {
+  return point.type ?? point.ticker ?? point.label ?? point.name ?? 'Item'
+}
 
 export function Dashboard({
   totalPatrimony,
@@ -55,143 +54,252 @@ export function Dashboard({
   concentrationData,
   performanceData,
   evolutionData,
-  insights,
+  insights
 }: DashboardProps) {
-  const safeTotalPatrimony = sanitizeNumber(totalPatrimony);
-  const safeDistributionByType = Array.isArray(distributionByType)
-    ? distributionByType
-    : [];
-  const safeDistributionByAsset = Array.isArray(distributionByAsset)
-    ? distributionByAsset
-    : [];
-  const safeConcentrationData = Array.isArray(concentrationData)
-    ? concentrationData
-    : [];
-  const safePerformanceData = Array.isArray(performanceData)
-    ? performanceData
-    : [];
-  const safeEvolutionData = Array.isArray(evolutionData) ? evolutionData : [];
-  const safeInsights = Array.isArray(insights) ? insights : [];
+  const summaryItems = [
+    {
+      label: 'Patrimônio total',
+      value: numberFormatter.format(totalPatrimony)
+    },
+    {
+      label: 'Tipos',
+      value: String(distributionByType.length)
+    },
+    {
+      label: 'Ativos',
+      value: String(distributionByAsset.length)
+    },
+    {
+      label: 'Top concentração',
+      value: String(concentrationData.length)
+    },
+    {
+      label: 'Performance',
+      value: String(performanceData.length)
+    }
+  ]
 
-  const hasAnyChartData =
-    safeTotalPatrimony > 0 ||
-    safeDistributionByType.length > 0 ||
-    safeDistributionByAsset.length > 0 ||
-    safeConcentrationData.length > 0 ||
-    safePerformanceData.length > 0 ||
-    safeEvolutionData.length > 0;
-
-  if (!hasAnyChartData) {
-    return (
-      <section
-        className="rounded-2xl bg-white p-6 shadow"
-        aria-label="Dashboard"
-      >
-        <h2 className="text-xl font-semibold">Dashboard</h2>
-        <p className="mt-4 text-center text-gray-500">
-          Sem dados para exibir o dashboard.
-        </p>
-      </section>
-    );
-  }
+  const topAssets = distributionByAsset.slice(0, 8)
+  const topConcentration = concentrationData.slice(0, 5)
+  const hasTypeDistribution = distributionByType.length > 0
 
   return (
-    <section
-      className="space-y-6 rounded-2xl bg-transparent"
-      aria-label="Dashboard"
-    >
-      <header className="space-y-2">
-        <h2 className="text-xl font-semibold">Dashboard</h2>
-        <p className="text-sm text-gray-500">
+    <section className="space-y-6">
+      <div className="flex flex-col gap-2">
+        <h2 className="text-2xl font-bold text-slate-900">Dashboard</h2>
+        <p className="text-sm leading-6 text-slate-600">
           Visão consolidada da carteira, concentração e performance.
         </p>
-      </header>
+      </div>
 
-      {safeInsights.length > 0 && (
-        <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="text-sm text-gray-500">Insights automáticos</div>
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_1.4fr]">
+        <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+          <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
+            Insights automáticos
+          </h3>
 
-          <div className="mt-3 space-y-2">
-            {safeInsights.map((insight) => (
-              <div
-                key={insight}
-                style={{
-                  borderLeft: `4px solid ${getInsightColor(insight)}`,
-                  paddingLeft: '0.75rem',
-                  fontWeight: 500,
-                }}
-              >
-                {insight}
+          <div className="mt-4 space-y-3">
+            {insights.length > 0 ? (
+              insights.map((insight, index) => (
+                <div
+                  key={`${insight}-${index}`}
+                  className="rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm font-medium text-slate-800 shadow-sm"
+                >
+                  {insight}
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+                Nenhum insight disponível no momento.
               </div>
-            ))}
+            )}
           </div>
-        </section>
-      )}
+        </div>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="text-sm text-gray-500">Patrimônio total</div>
-          <div className="mt-2 text-2xl font-bold text-slate-900">
-            R$ {formatCurrency(safeTotalPatrimony)}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {summaryItems.map((item) => (
+            <div
+              key={item.label}
+              className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+            >
+              <p className="text-sm font-medium text-slate-500">{item.label}</p>
+              <p className="mt-3 text-2xl font-bold text-slate-900">
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="text-base font-semibold text-slate-900">
+            Distribuição por tipo
+          </h3>
+
+          <div className="mt-4 h-[320px]">
+            {hasTypeDistribution ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={distributionByType}
+                    dataKey="value"
+                    nameKey="label"
+                    innerRadius={70}
+                    outerRadius={110}
+                    paddingAngle={2}
+                    label={(entry) => getPointLabel(entry as DashboardGenericPoint)}
+                  >
+                    {distributionByType.map((entry, index) => (
+                      <Cell
+                        key={`${getPointLabel(entry)}-${index}`}
+                        fill={chartColors[index % chartColors.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value) => numberFormatter.format(Number(value ?? 0))}
+                    labelFormatter={(_, payload) => {
+                      const item = payload?.[0]?.payload as
+                        | DashboardGenericPoint
+                        | undefined
+
+                      return item ? getPointLabel(item) : ''
+                    }}
+                  />
+                  <Legend
+                    formatter={(_, entry) => {
+                      const payload = entry?.payload as
+                        | DashboardGenericPoint
+                        | undefined
+
+                      return payload ? getPointLabel(payload) : ''
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                Nenhuma distribuição por tipo disponível.
+              </div>
+            )}
           </div>
-        </section>
+        </div>
 
-        <section className="rounded-2xl bg-white p-4 shadow">
-          <div className="text-sm text-gray-500">Resumo</div>
-          <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-            <div>
-              <div className="text-gray-500">Tipos</div>
-              <div className="font-semibold text-slate-900">
-                {safeDistributionByType.length.toLocaleString('pt-BR')}
-              </div>
-            </div>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="text-base font-semibold text-slate-900">
+            Distribuição por ativo
+          </h3>
 
-            <div>
-              <div className="text-gray-500">Ativos</div>
-              <div className="font-semibold text-slate-900">
-                {safeDistributionByAsset.length.toLocaleString('pt-BR')}
-              </div>
-            </div>
+          <div className="mt-4 space-y-4">
+            {topAssets.length > 0 ? (
+              topAssets.map((item, index) => {
+                const label = getPointLabel(item)
+                const widthPct =
+                  totalPatrimony > 0 ? (item.value / totalPatrimony) * 100 : 0
 
-            <div>
-              <div className="text-gray-500">Top concentração</div>
-              <div className="font-semibold text-slate-900">
-                {safeConcentrationData.length.toLocaleString('pt-BR')}
-              </div>
-            </div>
+                return (
+                  <div key={`${label}-${index}`}>
+                    <div className="mb-1 flex items-center justify-between text-sm">
+                      <span className="font-medium text-slate-700">{label}</span>
+                      <span className="text-slate-500">
+                        {numberFormatter.format(item.value)}
+                      </span>
+                    </div>
 
-            <div>
-              <div className="text-gray-500">Performance</div>
-              <div className="font-semibold text-slate-900">
-                {safePerformanceData.length.toLocaleString('pt-BR')}
+                    <div className="h-2 rounded-full bg-slate-200">
+                      <div
+                        className="h-2 rounded-full bg-slate-900"
+                        style={{
+                          width: `${Math.max(0, Math.min(widthPct, 100))}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                Nenhum ativo disponível para exibição.
               </div>
-            </div>
+            )}
           </div>
-        </section>
+        </div>
+      </div>
 
-        <DashboardChartCard title="Distribuição por tipo">
-          <DistributionByTypeChart data={safeDistributionByType} />
-        </DashboardChartCard>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="text-base font-semibold text-slate-900">
+            Top concentração
+          </h3>
 
-        <DashboardChartCard title="Distribuição por ativo">
-          <DistributionByAssetChart data={safeDistributionByAsset} />
-        </DashboardChartCard>
+          <div className="mt-4 space-y-4">
+            {topConcentration.length > 0 ? (
+              topConcentration.map((item, index) => {
+                const label = getPointLabel(item)
+                const pct =
+                  totalPatrimony > 0 ? (item.value / totalPatrimony) * 100 : 0
 
-        <DashboardChartCard title="Concentração">
-          <ConcentrationChart data={safeConcentrationData} />
-        </DashboardChartCard>
+                return (
+                  <div
+                    key={`${label}-${index}`}
+                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                  >
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {label}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {numberFormatter.format(item.value)}
+                      </p>
+                    </div>
 
-        <DashboardChartCard title="Performance">
-          <PerformanceChart data={safePerformanceData} />
-        </DashboardChartCard>
+                    <span className="text-sm font-bold text-slate-900">
+                      {percentageFormatter.format(pct)}%
+                    </span>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                Nenhum dado de concentração disponível.
+              </div>
+            )}
+          </div>
+        </div>
 
-        <DashboardChartCard
-          title="Evolução do patrimônio"
-          className="md:col-span-2"
-        >
-          <EvolutionChart data={safeEvolutionData} />
-        </DashboardChartCard>
+        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h3 className="text-base font-semibold text-slate-900">
+            Indicadores de performance
+          </h3>
+
+          <div className="mt-4 space-y-3">
+            {performanceData.length > 0 || evolutionData.length > 0 ? (
+              [...performanceData, ...evolutionData].slice(0, 8).map((item, index) => {
+                const label = getPointLabel(item)
+
+                return (
+                  <div
+                    key={`${label}-${index}`}
+                    className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+                  >
+                    <span className="text-sm font-medium text-slate-700">
+                      {label}
+                    </span>
+                    <span className="text-sm font-bold text-slate-900">
+                      {numberFormatter.format(item.value)}
+                    </span>
+                  </div>
+                )
+              })
+            ) : (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                Nenhum indicador disponível.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </section>
-  );
+  )
 }
