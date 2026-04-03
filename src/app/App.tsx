@@ -1,22 +1,46 @@
-import type { ChangeEvent } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  type ChangeEvent,
+  type ReactNode,
+} from 'react'
 import { AuthGate } from './AuthGate'
+import { useAppViewModel } from './useAppViewModel'
 
-import { Dashboard } from '../components/dashboard/Dashboard'
 import { StatGrid } from '../components/common/StatGrid'
 import { ContributionSection } from '../components/contribution/ContributionSection'
+import WhatToDoNowSection from '../components/decision/WhatToDoNowSection'
 import { B3ImportButton } from '../components/import/B3ImportButton'
 import { PortfolioSection } from '../components/portfolio/PortfolioSection'
 import { RankingSection } from '../components/ranking/RankingSection'
 import { RebalanceSection } from '../components/rebalance/RebalanceSection'
-import WhatToDoNowSection from '../components/decision/WhatToDoNowSection'
 
 import type { MacroScenario, RiskProfile } from '../domain/types'
-import { useAppViewModel } from './useAppViewModel'
 import { authService } from '../services/authService'
+
+const Dashboard = lazy(async () => {
+  const module = await import('../components/dashboard/Dashboard')
+  return { default: module.Dashboard }
+})
 
 type SelectOption<T extends string> = Readonly<{
   value: T
   label: string
+}>
+
+type HeaderSelectProps<T extends string> = Readonly<{
+  label: string
+  value: T
+  options: readonly SelectOption<T>[]
+  onChange: (event: ChangeEvent<HTMLSelectElement>) => void
+  minWidthClassName?: string
+}>
+
+type SurfaceCardProps = Readonly<{
+  children: ReactNode
+  className?: string
+  bodyClassName?: string
 }>
 
 const RISK_PROFILE_OPTIONS: readonly SelectOption<RiskProfile>[] = [
@@ -32,82 +56,157 @@ const MACRO_SCENARIO_OPTIONS: readonly SelectOption<MacroScenario>[] = [
   { value: 'INFLACAO', label: 'Inflação' },
 ]
 
+const SURFACE_CARD_CLASS_NAME =
+  'rounded-3xl border border-slate-200/50 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.035),0_8px_24px_rgba(0,0,0,0.05)] ring-1 ring-slate-100/50 transition-all duration-200 hover:shadow-[0_2px_8px_rgba(0,0,0,0.05),0_14px_36px_rgba(0,0,0,0.08)]'
+
+function HeaderSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  minWidthClassName = 'min-w-[180px]',
+}: HeaderSelectProps<T>) {
+  return (
+    <label className={`flex ${minWidthClassName} flex-col gap-1.5`}>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">
+        {label}
+      </span>
+
+      <select
+        value={value}
+        onChange={onChange}
+        className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+function SurfaceCard({
+  children,
+  className = '',
+  bodyClassName = 'p-5 md:p-6',
+}: SurfaceCardProps) {
+  return (
+    <section className={`${SURFACE_CARD_CLASS_NAME} ${className}`}>
+      <div className={bodyClassName}>{children}</div>
+    </section>
+  )
+}
+
+function SectionIntro({
+  eyebrow,
+  title,
+  description,
+}: Readonly<{
+  eyebrow: string
+  title: string
+  description?: string
+}>) {
+  return (
+    <div className="space-y-1">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+        {eyebrow}
+      </p>
+      <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+        {title}
+      </h2>
+      {description ? (
+        <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
+      ) : null}
+    </div>
+  )
+}
+
+function DashboardFallback() {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+      Carregando dashboard...
+    </div>
+  )
+}
+
 const App = () => {
   const vm = useAppViewModel()
 
-  const handleRiskProfileChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    vm.header.onRiskProfileChange(event.target.value as RiskProfile)
-  }
+  const handleRiskProfileChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      vm.header.onRiskProfileChange(event.target.value as RiskProfile)
+    },
+    [vm.header]
+  )
 
-  const handleMacroScenarioChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    vm.header.onMacroScenarioChange(event.target.value as MacroScenario)
-  }
+  const handleMacroScenarioChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      vm.header.onMacroScenarioChange(event.target.value as MacroScenario)
+    },
+    [vm.header]
+  )
 
-  const handleSignOut = async () => {
+  const handleSignOut = useCallback(async () => {
     await authService.signOut()
-  }
+  }, [])
 
   return (
     <AuthGate>
-      <main className="min-h-screen bg-slate-100 text-slate-900">
-        <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 md:px-6 lg:px-8">
-          <header className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
-              <div className="max-w-3xl">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
-                  Invest Smart
-                </p>
+      <main className="min-h-screen bg-gradient-to-b from-slate-100 via-slate-50 to-white text-slate-900">
+        <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-8 px-4 py-5 md:gap-10 md:px-6 md:py-6 lg:px-8 lg:py-8">
+          <header
+            className={`${SURFACE_CARD_CLASS_NAME} bg-white/90 backdrop-blur-md`}
+          >
+            <div className="flex flex-col gap-5 px-5 py-5 md:px-6 md:py-6 xl:flex-row xl:items-center xl:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-sm font-bold text-white shadow-sm">
+                    IS
+                  </div>
 
-                <h1 className="mt-3 text-3xl font-bold leading-tight text-slate-900 md:text-5xl">
-                  Decisão de aportes com ranking, proteção de concentração e
-                  persistência local
-                </h1>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-slate-500">
+                      Plataforma
+                    </p>
 
-                <p className="mt-4 text-sm leading-7 text-slate-600 md:text-base">
-                  App modular em React + TypeScript, com engine separada,
-                  simulação de aporte, rebalanceamento e sincronização em nuvem.
-                </p>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <h1 className="text-2xl font-bold tracking-[-0.03em] text-slate-950 md:text-3xl">
+                        Invest Smart
+                      </h1>
+
+                      <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                        Buy &amp; Hold
+                      </span>
+                    </div>
+
+                    <p className="mt-2 max-w-lg text-sm leading-6 text-slate-400">
+                      Motor inteligente para leitura da carteira, priorização de
+                      aportes e rebalanceamento com foco em consistência.
+                    </p>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex w-full flex-col gap-4 xl:max-w-md">
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-1">
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-semibold text-slate-700">
-                      Perfil
-                    </span>
-                    <select
-                      value={vm.header.riskProfile}
-                      onChange={handleRiskProfileChange}
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                    >
-                      {RISK_PROFILE_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+              <div className="flex w-full flex-col gap-3 md:grid md:grid-cols-2 xl:w-auto xl:flex xl:flex-row xl:flex-wrap xl:items-end xl:justify-end xl:gap-4">
+                <HeaderSelect<RiskProfile>
+                  label="Perfil"
+                  value={vm.header.riskProfile}
+                  options={RISK_PROFILE_OPTIONS}
+                  onChange={handleRiskProfileChange}
+                />
 
-                  <label className="block">
-                    <span className="mb-2 block text-sm font-semibold text-slate-700">
-                      Cenário macro
-                    </span>
-                    <select
-                      value={vm.header.macroScenario}
-                      onChange={handleMacroScenarioChange}
-                      className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-500"
-                    >
-                      {MACRO_SCENARIO_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <HeaderSelect<MacroScenario>
+                  label="Cenário macro"
+                  value={vm.header.macroScenario}
+                  options={MACRO_SCENARIO_OPTIONS}
+                  onChange={handleMacroScenarioChange}
+                  minWidthClassName="min-w-[200px]"
+                />
 
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <div className="flex-1">
+                <div className="flex flex-col gap-2 sm:flex-row md:col-span-2 xl:pt-[23px]">
+                  <div className="w-full sm:w-auto">
                     <B3ImportButton
                       currentPositions={vm.portfolio.currentPositions}
                       onConfirmImport={vm.portfolio.onImportFromB3}
@@ -117,7 +216,7 @@ const App = () => {
                   <button
                     type="button"
                     onClick={handleSignOut}
-                    className="rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    className="h-11 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                   >
                     Sair
                   </button>
@@ -126,52 +225,122 @@ const App = () => {
             </div>
           </header>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <Dashboard {...vm.dashboard} />
-          </section>
+          <div className="space-y-8 md:space-y-10">
+            <section className="grid gap-6 lg:grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
+              <div className="xl:col-span-8">
+                <SurfaceCard className="h-full bg-white/95 backdrop-blur-sm">
+                  <div className="space-y-5">
+                    <SectionIntro
+                      eyebrow="Primeira dobra"
+                      title="Visão geral da carteira"
+                      description="Resumo executivo da posição atual, leitura consolidada e base para decisão."
+                    />
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <StatGrid
-              totalInvested={vm.dashboard.totalInvested}
-              monthlyContribution={vm.dashboard.monthlyContribution}
-              rankedCount={vm.dashboard.rankedCount}
-            />
-          </section>
+                    <Suspense fallback={<DashboardFallback />}>
+                      <Dashboard {...vm.dashboard} />
+                    </Suspense>
+                  </div>
+                </SurfaceCard>
+              </div>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <WhatToDoNowSection decisions={vm.ranking.decision} />
-          </section>
+              <div className="xl:col-span-4">
+                <div className="flex flex-col gap-6 lg:flex-row xl:flex-col">
+                  <SurfaceCard className="bg-white/95 backdrop-blur-sm">
+                    <div className="space-y-4">
+                      <SectionIntro
+                        eyebrow="Indicadores"
+                        title="Resumo numérico"
+                      />
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <ContributionSection
-              monthlyContribution={vm.contribution.monthlyContribution}
-              contribution={vm.contribution.contribution}
-              onContributionChange={vm.contribution.onMonthlyContributionChange}
-            />
-          </section>
+                      <StatGrid
+                        totalInvested={vm.dashboard.totalInvested}
+                        monthlyContribution={vm.dashboard.monthlyContribution}
+                        rankedCount={vm.dashboard.rankedCount}
+                      />
+                    </div>
+                  </SurfaceCard>
 
-          <section className="grid gap-6 xl:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <PortfolioSection
-                portfolio={vm.portfolio.portfolio}
-                onUpsertPosition={vm.portfolio.onUpsertPosition}
-                onRemovePosition={vm.portfolio.onRemovePosition}
-              />
-            </div>
+                  <SurfaceCard className="bg-white/90 backdrop-blur-sm">
+                    <div className="space-y-4">
+                      <SectionIntro
+                        eyebrow="Prioridade imediata"
+                        title="O que fazer agora"
+                      />
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <RankingSection
-                ranking={vm.ranking.ranking}
-                decision={vm.ranking.decision}
-                filterType={vm.ranking.filterType}
-                onFilterTypeChange={vm.ranking.onFilterTypeChange}
-              />
-            </div>
-          </section>
+                      <WhatToDoNowSection decisions={vm.ranking.decision} />
+                    </div>
+                  </SurfaceCard>
+                </div>
+              </div>
+            </section>
 
-          <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <RebalanceSection rebalance={vm.rebalance.rebalance} />
-          </section>
+            <section className="grid gap-6 xl:grid-cols-[minmax(320px,0.9fr)_minmax(0,1.1fr)]">
+              <div className="xl:col-span-5">
+                <SurfaceCard className="h-full">
+                  <div className="space-y-4">
+                    <SectionIntro
+                      eyebrow="Simulação"
+                      title="Aporte mensal"
+                    />
+
+                    <ContributionSection
+                      monthlyContribution={vm.contribution.monthlyContribution}
+                      contribution={vm.contribution.contribution}
+                      onContributionChange={
+                        vm.contribution.onMonthlyContributionChange
+                      }
+                    />
+                  </div>
+                </SurfaceCard>
+              </div>
+
+              <div className="xl:col-span-7">
+                <div className="grid gap-6">
+                  <SurfaceCard>
+                    <div className="space-y-4">
+                      <SectionIntro
+                        eyebrow="Operação"
+                        title="Carteira atual"
+                      />
+
+                      <PortfolioSection
+                        portfolio={vm.portfolio.portfolio}
+                        onUpsertPosition={vm.portfolio.onUpsertPosition}
+                        onRemovePosition={vm.portfolio.onRemovePosition}
+                      />
+                    </div>
+                  </SurfaceCard>
+
+                  <SurfaceCard>
+                    <div className="space-y-4">
+                      <SectionIntro
+                        eyebrow="Inteligência"
+                        title="Ranking de ativos"
+                      />
+
+                      <RankingSection
+                        ranking={vm.ranking.ranking}
+                        decision={vm.ranking.decision}
+                        filterType={vm.ranking.filterType}
+                        onFilterTypeChange={vm.ranking.onFilterTypeChange}
+                      />
+                    </div>
+                  </SurfaceCard>
+                </div>
+              </div>
+            </section>
+
+            <SurfaceCard>
+              <div className="space-y-4">
+                <SectionIntro
+                  eyebrow="Balanceamento"
+                  title="Rebalanceamento sugerido"
+                />
+
+                <RebalanceSection rebalance={vm.rebalance.rebalance} />
+              </div>
+            </SurfaceCard>
+          </div>
         </div>
       </main>
     </AuthGate>
