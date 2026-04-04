@@ -1,148 +1,93 @@
-import { useMemo } from 'react';
-import { ASSETS } from '../data/assets';
+import { useMemo } from 'react'
 import type {
-  AppState,
-  Asset,
+  ContributionSuggestion,
+  MacroScenario,
   PortfolioPosition,
   RankedAsset,
-} from '../domain/types';
-import { allocateByScore } from '../engine/contribution/allocateByScore';
-import { buildRanking } from '../engine/ranking/buildRanking';
-import { calculateRebalance } from '../engine/rebalance/calculateRebalance';
-import { safeDivide } from '../utils/number';
+  RebalanceSuggestion,
+  RiskProfile,
+} from '../domain/types'
+import { ASSETS } from '../data/assets'
+import { buildContribution } from '../engine/contribution/buildContribution'
+import {
+  buildPortfolio,
+  buildPortfolioAssetMap,
+  calculateTotalInvested,
+  type PortfolioItem,
+} from '../engine/portfolio/buildPortfolio'
+import { buildSafePreferences } from '../engine/preferences/buildSafePreferences'
+import { buildRanking } from '../engine/ranking/buildRanking'
+import { buildRebalance } from '../engine/rebalance/buildRebalance'
 
-type PortfolioRow = PortfolioPosition & {
-  price: number;
-  marketValue: number;
-  profit: number;
-  allocationPct: number;
-  sector: string;
-  type: Asset['type'];
-};
-
-const UNKNOWN_ASSET_FALLBACK: Pick<
-  PortfolioRow,
-  'price' | 'marketValue' | 'profit' | 'allocationPct' | 'sector' | 'type'
-> = {
-  price: 0,
-  marketValue: 0,
-  profit: 0,
-  allocationPct: 0,
-  sector: 'Desconhecido',
-  type: 'AÇÃO',
-};
-
-const normalizeTicker = (ticker: string): string => ticker.trim().toUpperCase();
-
-const roundCurrency = (value: number): number => Number(value.toFixed(2));
-
-const buildAssetsMap = (assets: readonly Asset[]): Map<string, Asset> => {
-  const map = new Map<string, Asset>();
-
-  for (const asset of assets) {
-    map.set(normalizeTicker(asset.ticker), asset);
+type InputState = {
+  positions: PortfolioPosition[]
+  preferences: {
+    riskProfile: RiskProfile
+    macroScenario: MacroScenario
   }
+}
 
-  return map;
-};
+type UsePortfolioDataResult = {
+  ranking: RankedAsset[]
+  portfolio: PortfolioItem[]
+  totalInvested: number
+  contribution: ContributionSuggestion[]
+  rebalance: RebalanceSuggestion[]
+  alerts: string[]
+}
 
-const buildPortfolioBaseRows = (
-  positions: readonly PortfolioPosition[],
-  assetsMap: ReadonlyMap<string, Asset>,
-): PortfolioRow[] =>
-  positions.map((position) => {
-    const ticker = normalizeTicker(position.ticker);
-    const asset = assetsMap.get(ticker);
+function buildAlerts(rebalance: RebalanceSuggestion[]): string[] {
+  return rebalance
+    .filter((item) => item.action === 'REDUZIR')
+    .map((item) => `Alta concentração em ${item.ticker}`)
+}
 
-    if (!asset) {
-      return {
-        ...position,
-        ticker,
-        ...UNKNOWN_ASSET_FALLBACK,
-      };
-    }
+export const usePortfolioData = (
+  state: InputState
+): UsePortfolioDataResult => {
+  const assetMap = useMemo(() => buildPortfolioAssetMap(ASSETS), [])
 
-    const marketValue = roundCurrency(position.quantity * asset.price);
-    const profit = roundCurrency(
-      (asset.price - position.avgPrice) * position.quantity,
-    );
+  const portfolio = useMemo(
+    () => buildPortfolio(state.positions, assetMap),
+    [state.positions, assetMap]
+  )
 
-    return {
-      ...position,
-      ticker,
-      price: asset.price,
-      sector: asset.sector,
-      type: asset.type,
-      marketValue,
-      profit,
-      allocationPct: 0,
-    };
-  });
+  const totalInvested = useMemo(
+    () => calculateTotalInvested(state.positions),
+    [state.positions]
+  )
 
-const calculateTotalInvested = (portfolioRows: readonly PortfolioRow[]): number =>
-  roundCurrency(portfolioRows.reduce((sum, item) => sum + item.marketValue, 0));
+  const safePreferences = useMemo(
+    () => buildSafePreferences(state.preferences),
+    [state.preferences]
+  )
 
-const withAllocationPct = (
-  portfolioRows: readonly PortfolioRow[],
-  totalInvested: number,
-): PortfolioRow[] =>
-  portfolioRows.map((item) => ({
-    ...item,
-    allocationPct: roundCurrency(
-      safeDivide(item.marketValue, totalInvested) * 100,
-    ),
-  }));
+  const ranking = useMemo(
+    () => buildRanking(ASSETS, state.positions, safePreferences),
+    [state.positions, safePreferences]
+  )
 
-const filterRankingByType = (
-  ranking: readonly RankedAsset[],
-  filterType: AppState['filterType'],
-): RankedAsset[] => {
-  if (filterType === 'TODOS') {
-    return [...ranking];
+  const contribution = useMemo(
+    () => buildContribution(ranking),
+    [ranking]
+  )
+
+  const rebalance = useMemo(
+    () => buildRebalance(ranking),
+    [ranking]
+  )
+
+  const alerts = useMemo(
+    () => buildAlerts(rebalance),
+    [rebalance]
+  )
+
+  return {
+    ranking,
+    portfolio,
+    totalInvested,
+    contribution,
+    rebalance,
+    alerts,
   }
-
-  return ranking.filter((asset) => asset.type === filterType);
-};
-
-const buildAlerts = (ranking: readonly RankedAsset[]): string[] =>
-  ranking
-    .filter((asset) => asset.currentAllocationPct > 20)
-    .map((asset) => `${asset.ticker} acima de 20% da carteira.`);
-
-export const usePortfolioData = (state: AppState) => {
-  const assetsMap = useMemo<ReadonlyMap<string, Asset>>(
-    () => buildAssetsMap(ASSETS),
-    [],
-  );
-
-  return useMemo(() => {
-    const ranking = buildRanking(ASSETS, state.positions, state.preferences);
-    const filteredRanking = filterRankingByType(ranking, state.filterType);
-
-    const portfolioBaseRows = buildPortfolioBaseRows(state.positions, assetsMap);
-    const totalInvested = calculateTotalInvested(portfolioBaseRows);
-    const portfolio = withAllocationPct(portfolioBaseRows, totalInvested);
-
-    const contribution = allocateByScore(ranking, {
-      totalAmount: state.monthlyContribution,
-    });
-
-    const rebalance = calculateRebalance(ranking);
-    const alerts = buildAlerts(ranking);
-
-    return {
-      ranking: filteredRanking,
-      portfolio,
-      totalInvested,
-      contribution,
-      rebalance,
-      alerts,
-    };
-  }, [
-    assetsMap,
-    state.filterType,
-    state.monthlyContribution,
-    state.positions,
-    state.preferences,
-  ]);
-};
+}

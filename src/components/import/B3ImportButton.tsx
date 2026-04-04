@@ -1,123 +1,217 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react';
-import type { PortfolioPosition } from '../../domain/types';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from 'react'
+import type { PortfolioPosition } from '../../domain/types'
 import type {
   B3ImportMode,
   B3ParsedPosition,
-} from '../../domain/import/b3Import';
-import { buildB3ImportPreview } from '../../domain/import/b3Import';
-import { parseB3ImportFile } from '../../engine/import/b3ImportService';
-import { parseB3Pdf } from '../../infra/b3pdf/parseB3Pdf';
+} from '../../domain/import/b3Import'
+import { buildB3ImportPreview } from '../../domain/import/b3Import'
+import { parseB3ImportFile } from '../../engine/import/b3ImportService'
 
 const B3ImportModal = lazy(async () => {
-  const module = await import('./B3ImportModal');
-  return { default: module.B3ImportModal };
-});
+  const module = await import('./B3ImportModal')
+  return { default: module.B3ImportModal }
+})
+
+type ParseB3Pdf = (file: File) => Promise<B3ParsedPosition[]>
+
+async function loadB3PdfParser(): Promise<ParseB3Pdf> {
+  const module = await import('../../infra/B3/parseB3Pdf')
+  return module.parseB3Pdf
+}
 
 interface B3ImportButtonProps {
-  currentPositions: PortfolioPosition[];
+  currentPositions: PortfolioPosition[]
   onConfirmImport: (
     parsed: B3ParsedPosition[],
     mode: B3ImportMode
-  ) => void;
+  ) => void
 }
 
-const INITIAL_MODE: B3ImportMode = 'MERGE';
+const INITIAL_MODE: B3ImportMode = 'MERGE'
+const EMPTY_ERROR_MESSAGE = ''
+
+function isPdfFile(file: File): boolean {
+  const normalizedName = file.name.trim().toLowerCase()
+  return file.type === 'application/pdf' || normalizedName.endsWith('.pdf')
+}
+
+function normalizeImportedPositions(
+  positions: B3ParsedPosition[] | null | undefined
+): B3ParsedPosition[] {
+  if (!Array.isArray(positions)) {
+    return []
+  }
+
+  return positions.filter((position) => {
+    if (!position || typeof position !== 'object') {
+      return false
+    }
+
+    const hasValidTicker =
+      typeof position.ticker === 'string' && position.ticker.trim().length > 0
+
+    const hasValidQuantity =
+      typeof position.quantity === 'number' &&
+      Number.isFinite(position.quantity) &&
+      position.quantity > 0
+
+    const hasValidAvgPrice =
+      typeof position.avgPrice === 'number' &&
+      Number.isFinite(position.avgPrice) &&
+      position.avgPrice >= 0
+
+    return hasValidTicker && hasValidQuantity && hasValidAvgPrice
+  })
+}
 
 export function B3ImportButton({
   currentPositions,
   onConfirmImport,
 }: B3ImportButtonProps) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const isMountedRef = useRef(true)
 
-  const [parsedPositions, setParsedPositions] = useState<B3ParsedPosition[]>([]);
-  const [selectedMode, setSelectedMode] = useState<B3ImportMode>(INITIAL_MODE);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [parsedPositions, setParsedPositions] = useState<B3ParsedPosition[]>([])
+  const [selectedMode, setSelectedMode] = useState<B3ImportMode>(INITIAL_MODE)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [errorMessage, setErrorMessage] = useState(EMPTY_ERROR_MESSAGE)
 
-  const hasParsedPositions = parsedPositions.length > 0;
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
+  const hasParsedPositions = parsedPositions.length > 0
 
   const preview = useMemo(() => {
-    if (!hasParsedPositions) return null;
+    if (!hasParsedPositions) {
+      return null
+    }
 
     try {
       return buildB3ImportPreview(
         currentPositions,
         parsedPositions,
         selectedMode
-      );
+      )
     } catch (error) {
-      console.error('Failed to build preview', error);
-      return null;
+      console.error('Failed to build B3 import preview:', error)
+      return null
     }
-  }, [currentPositions, parsedPositions, selectedMode, hasParsedPositions]);
+  }, [currentPositions, parsedPositions, selectedMode, hasParsedPositions])
+
+  const resetInput = useCallback(() => {
+    if (inputRef.current) {
+      inputRef.current.value = ''
+    }
+  }, [])
 
   const resetFlow = useCallback(() => {
-    setParsedPositions([]);
-    setSelectedMode(INITIAL_MODE);
-    setErrorMessage('');
-
-    if (inputRef.current) inputRef.current.value = '';
-  }, []);
+    setParsedPositions([])
+    setSelectedMode(INITIAL_MODE)
+    setErrorMessage(EMPTY_ERROR_MESSAGE)
+    resetInput()
+  }, [resetInput])
 
   const openFilePicker = useCallback(() => {
-    if (isProcessing) return;
-    setErrorMessage('');
-    inputRef.current?.click();
-  }, [isProcessing]);
+    if (isProcessing) {
+      return
+    }
+
+    setErrorMessage(EMPTY_ERROR_MESSAGE)
+    inputRef.current?.click()
+  }, [isProcessing])
 
   const handleFileSelection = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.currentTarget.files?.[0] ?? null;
-      event.currentTarget.value = '';
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.currentTarget.files?.[0] ?? null
+      event.currentTarget.value = ''
 
-      if (!file) return;
+      if (!file) {
+        return
+      }
 
-      setIsProcessing(true);
-      setErrorMessage('');
-      setParsedPositions([]);
+      setIsProcessing(true)
+      setErrorMessage(EMPTY_ERROR_MESSAGE)
+      setParsedPositions([])
 
       try {
-        let positions: B3ParsedPosition[] = [];
+        let positions: B3ParsedPosition[] = []
 
-        // 🔥 DETECÇÃO AUTOMÁTICA DE TIPO
-        if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-          positions = await parseB3Pdf(file);
+        if (isPdfFile(file)) {
+          const parseB3Pdf = await loadB3PdfParser()
+          positions = await parseB3Pdf(file)
         } else {
-          const content = await file.text();
-          const result = parseB3ImportFile(content);
-          positions = result.positions;
+          const content = await file.text()
+          const result = parseB3ImportFile(content)
+          positions = result.positions
         }
 
-        if (!positions || positions.length === 0) {
+        const normalizedPositions = normalizeImportedPositions(positions)
+
+        if (normalizedPositions.length === 0) {
+          if (!isMountedRef.current) {
+            return
+          }
+
           setErrorMessage(
             'Nenhum ativo elegível foi encontrado no arquivo da B3.'
-          );
-          return;
+          )
+          return
         }
 
-        setParsedPositions(positions);
+        if (!isMountedRef.current) {
+          return
+        }
+
+        setParsedPositions(normalizedPositions)
       } catch (error) {
-        console.error('Import error:', error);
+        console.error('B3 import error:', error)
+
+        if (!isMountedRef.current) {
+          return
+        }
+
         setErrorMessage(
-          'Erro ao processar arquivo da B3. Verifique o formato.'
-        );
+          'Erro ao processar arquivo da B3. Verifique o formato e tente novamente.'
+        )
       } finally {
-        setIsProcessing(false);
+        if (isMountedRef.current) {
+          setIsProcessing(false)
+        }
       }
     },
     []
-  );
+  )
 
   const handleConfirm = useCallback(() => {
-    if (!hasParsedPositions) return;
+    if (!hasParsedPositions) {
+      return
+    }
 
-    onConfirmImport(parsedPositions, selectedMode);
-    resetFlow();
-  }, [hasParsedPositions, parsedPositions, selectedMode, onConfirmImport, resetFlow]);
+    onConfirmImport(parsedPositions, selectedMode)
+    resetFlow()
+  }, [
+    hasParsedPositions,
+    onConfirmImport,
+    parsedPositions,
+    resetFlow,
+    selectedMode,
+  ])
 
   const handleCancel = useCallback(() => {
-    resetFlow();
-  }, [resetFlow]);
+    resetFlow()
+  }, [resetFlow])
 
   return (
     <>
@@ -133,15 +227,16 @@ export function B3ImportButton({
         type="button"
         onClick={openFilePicker}
         disabled={isProcessing}
+        className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isProcessing ? 'Importando...' : 'Importar B3'}
       </button>
 
-      {errorMessage && (
-        <p className="negative">{errorMessage}</p>
-      )}
+      {errorMessage ? (
+        <p className="mt-2 text-sm text-red-600">{errorMessage}</p>
+      ) : null}
 
-      {preview && (
+      {preview ? (
         <Suspense fallback={null}>
           <B3ImportModal
             preview={preview}
@@ -151,7 +246,7 @@ export function B3ImportButton({
             onCancel={handleCancel}
           />
         </Suspense>
-      )}
+      ) : null}
     </>
-  );
+  )
 }

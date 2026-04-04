@@ -27,7 +27,7 @@ const resolveConfidence = (
   }
 
   if (score >= GOOD_SCORE && percentile >= GOOD_PERCENTILE) {
-    return 'MEDIA';
+    return 'MÉDIA';
   }
 
   return 'BAIXA';
@@ -37,6 +37,7 @@ const resolveAction = (asset: RankedAsset): DecisionAction => {
   const score = asset.score.finalScore;
   const percentile = clampPercentile(asset.percentile);
   const allocation = asset.currentAllocationPct;
+  const recommendation = asset.score.recommendation;
 
   if (score < AVOID_SCORE) {
     return 'EVITAR';
@@ -58,26 +59,46 @@ const resolveAction = (asset: RankedAsset): DecisionAction => {
     return 'COMPRAR';
   }
 
-  return 'MANTER';
+ if (recommendation === 'COMPRAR') {
+  return 'COMPRAR';
+}
+
+return 'REDUZIR';
+
+  return 'COMPRAR';
 };
 
 const buildReason = (asset: RankedAsset, action: DecisionAction): string => {
   const score = asset.score.finalScore.toFixed(1);
   const percentile = clampPercentile(asset.percentile).toFixed(1);
   const allocation = asset.currentAllocationPct.toFixed(1);
+  const scoreReasons = asset.score.reasons.filter(Boolean);
 
   switch (action) {
     case 'COMPRAR_FORTE':
-      return `Score ${score}, percentil ${percentile} e baixa alocação (${allocation}%).`;
+      return scoreReasons.length > 0
+        ? `Score ${score}, percentil ${percentile} e baixa alocação (${allocation}%). ${scoreReasons.join(' ')}`
+        : `Score ${score}, percentil ${percentile} e baixa alocação (${allocation}%).`;
+
     case 'COMPRAR':
-      return `Bom score (${score}) e boa força relativa (${percentile}).`;
+      return scoreReasons.length > 0
+        ? `Bom score (${score}) e boa força relativa (${percentile}). ${scoreReasons.join(' ')}`
+        : `Bom score (${score}) e boa força relativa (${percentile}).`;
+
     case 'REDUZIR':
-      return `Concentração/alocação elevada (${allocation}%) ou score fraco (${score}).`;
+      return scoreReasons.length > 0
+        ? `Concentração/alocação elevada (${allocation}%) ou score fraco (${score}). ${scoreReasons.join(' ')}`
+        : `Concentração/alocação elevada (${allocation}%) ou score fraco (${score}).`;
+
     case 'EVITAR':
-      return `Score muito baixo (${score}) e baixa atratividade relativa.`;
-    case 'MANTER':
+      return scoreReasons.length > 0
+        ? `Score muito baixo (${score}) e baixa atratividade relativa. ${scoreReasons.join(' ')}`
+        : `Score muito baixo (${score}) e baixa atratividade relativa.`;
+
     default:
-      return `Ativo equilibrado no contexto atual.`;
+      return scoreReasons.length > 0
+        ? `Ativo equilibrado no contexto atual. ${scoreReasons.join(' ')}`
+        : `Ativo equilibrado no contexto atual.`;
   }
 };
 

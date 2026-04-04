@@ -11,6 +11,13 @@ const TAG_UI: Record<TagKey, { label: string; color: string }> = {
   strongBuy: { label: 'Forte compra', color: '#16a34a' },
   highConfidence: { label: 'Alta confiança', color: '#2563eb' },
   underweight: { label: 'Subalocado', color: '#d97706' },
+  overweight: { label: 'Sobrealocado', color: '#dc2626' },
+  international: { label: 'Internacional', color: '#0891b2' },
+  dividend: { label: 'Dividendos', color: '#65a30d' },
+  quality: { label: 'Qualidade', color: '#0f766e' },
+  growth: { label: 'Crescimento', color: '#7c3aed' },
+  resilience: { label: 'Resiliência', color: '#2563eb' },
+  balanced: { label: 'Balanceado', color: '#6b7280' },
   rebalance: { label: 'Rebalancear', color: '#7c3aed' },
   opportunity: { label: 'Oportunidade', color: '#dc2626' },
 };

@@ -1,19 +1,16 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './app/App';
-import { AuthGate } from './app/AuthGate';
-import './styles/globals.css';
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import App from './app/App'
+import './styles/globals.css'
 
-const rootElement = document.getElementById('root');
+const rootElement = document.getElementById('root')
 
-if (!rootElement) {
-  throw new Error('Root element #root not found.');
+if (!(rootElement instanceof HTMLElement)) {
+  throw new Error('Root element "#root" not found.')
 }
 
-ReactDOM.createRoot(rootElement).render(
-  <React.Fragment>
-    <AuthGate>
-      <App />
-    </AuthGate>
-  </React.Fragment>,
-);
+createRoot(rootElement).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+)

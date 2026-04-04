@@ -8,7 +8,7 @@ import {
 import { AuthGate } from './AuthGate'
 import { useAppViewModel } from './useAppViewModel'
 
-import { StatGrid } from '../components/common/StatGrid'
+import { StatGrid, type StatItem } from '../components/common/StatGrid'
 import { ContributionSection } from '../components/contribution/ContributionSection'
 import WhatToDoNowSection from '../components/decision/WhatToDoNowSection'
 import { B3ImportButton } from '../components/import/B3ImportButton'
@@ -41,6 +41,16 @@ type SurfaceCardProps = Readonly<{
   children: ReactNode
   className?: string
   bodyClassName?: string
+}>
+
+type MetricKind = 'currency' | 'percentage' | 'number'
+
+type LooseMetric = Readonly<{
+  label?: unknown
+  value?: unknown
+  type?: unknown
+  kind?: unknown
+  format?: unknown
 }>
 
 const RISK_PROFILE_OPTIONS: readonly SelectOption<RiskProfile>[] = [
@@ -131,8 +141,159 @@ function DashboardFallback() {
   )
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function toMetricKind(value: unknown): MetricKind | null {
+  if (value === 'currency' || value === 'percentage' || value === 'number') {
+    return value
+  }
+
+  return null
+}
+
+function readNumber(
+  source: Record<string, unknown>,
+  ...keys: readonly string[]
+): number | null {
+  for (const key of keys) {
+    const value = source[key]
+    if (isFiniteNumber(value)) {
+      return value
+    }
+  }
+
+  return null
+}
+
+function readMetricItems(source: Record<string, unknown>): StatItem[] | null {
+  const rawCandidates = [
+    source.statItems,
+    source.stats,
+    source.metrics,
+    source.performanceMetrics,
+  ]
+
+  for (const rawCandidate of rawCandidates) {
+    if (!Array.isArray(rawCandidate)) {
+      continue
+    }
+
+    const normalized = rawCandidate
+      .map((entry): StatItem | null => {
+        if (!entry || typeof entry !== 'object') {
+          return null
+        }
+
+        const metric = entry as LooseMetric
+        const label =
+          typeof metric.label === 'string' && metric.label.trim().length > 0
+            ? metric.label
+            : null
+
+        const value = metric.value
+        const type =
+          toMetricKind(metric.type) ??
+          toMetricKind(metric.kind) ??
+          toMetricKind(metric.format)
+
+        if (!label || !isFiniteNumber(value) || !type) {
+          return null
+        }
+
+        return {
+          label,
+          value,
+          type,
+        }
+      })
+      .filter((item): item is StatItem => item !== null)
+
+    if (normalized.length > 0) {
+      return normalized
+    }
+  }
+
+  return null
+}
+
+function buildDashboardStatItems(
+  dashboard: Record<string, unknown>
+): StatItem[] {
+  const metricItems = readMetricItems(dashboard)
+  if (metricItems && metricItems.length > 0) {
+    return metricItems
+  }
+
+  return [
+    {
+      label: 'Investido',
+      value: readNumber(dashboard, 'totalInvested', 'invested', 'investedValue') ?? 0,
+      type: 'currency',
+    },
+    {
+      label: 'Patrimônio',
+      value:
+        readNumber(
+          dashboard,
+          'totalPatrimony',
+          'patrimony',
+          'currentValue',
+          'portfolioValue'
+        ) ?? 0,
+      type: 'currency',
+    },
+    {
+      label: 'Resultado',
+      value: readNumber(dashboard, 'result', 'profitLoss', 'pnl') ?? 0,
+      type: 'currency',
+    },
+    {
+      label: 'Resultado %',
+      value:
+        readNumber(
+          dashboard,
+          'resultPercentage',
+          'profitLossPercentage',
+          'pnlPercentage'
+        ) ?? 0,
+      type: 'percentage',
+    },
+    {
+      label: 'Rentabilidade mensal',
+      value:
+        readNumber(
+          dashboard,
+          'monthlyReturn',
+          'monthlyReturnPercentage',
+          'monthlyProfitability'
+        ) ?? 0,
+      type: 'percentage',
+    },
+    {
+      label: 'Rentabilidade anual',
+      value:
+        readNumber(
+          dashboard,
+          'annualReturn',
+          'annualReturnPercentage',
+          'annualProfitability'
+        ) ?? 0,
+      type: 'percentage',
+    },
+    {
+      label: 'Volatilidade',
+      value: readNumber(dashboard, 'volatility', 'volatilityPercentage') ?? 0,
+      type: 'percentage',
+    },
+  ]
+}
+
 const App = () => {
   const vm = useAppViewModel()
+  const dashboardRecord = vm.dashboard as unknown as Record<string, unknown>
+  const dashboardStatItems = buildDashboardStatItems(dashboardRecord)
 
   const handleRiskProfileChange = useCallback(
     (event: ChangeEvent<HTMLSelectElement>) => {
@@ -252,11 +413,7 @@ const App = () => {
                         title="Resumo numérico"
                       />
 
-                      <StatGrid
-                        totalInvested={vm.dashboard.totalInvested}
-                        monthlyContribution={vm.dashboard.monthlyContribution}
-                        rankedCount={vm.dashboard.rankedCount}
-                      />
+                      <StatGrid items={dashboardStatItems} />
                     </div>
                   </SurfaceCard>
 

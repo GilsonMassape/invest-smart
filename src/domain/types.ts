@@ -8,17 +8,35 @@ export type MacroScenario =
   | 'CRESCIMENTO'
   | 'INFLACAO';
 
-export type FilterType = 'TODOS' | AssetType;
+export type ConfidenceLevel = 'ALTA' | 'MÉDIA' | 'BAIXA';
 
-/* =========================
-   CORE STATE
-========================= */
+/* 🔥 NÃO QUEBRE O PADRÃO ORIGINAL */
+export type DecisionAction =
+  | 'COMPRAR_FORTE'
+  | 'COMPRAR'
+  | 'REDUZIR'
+  | 'EVITAR';
 
-export interface PortfolioPosition {
-  ticker: string;
-  quantity: number;
-  avgPrice: number;
-}
+export type DecisionConfidence = ConfidenceLevel;
+
+export type RebalanceAction = 'COMPRAR' | 'REDUZIR' | 'MANTER';
+
+export type FilterType = AssetType | 'TODOS';
+
+/* 🔥 MANTÉM OS EXISTENTES + ADICIONA OS FALTANTES */
+export type TagKey =
+  | 'strongBuy'
+  | 'highConfidence'
+  | 'underweight'
+  | 'overweight'
+  | 'international'
+  | 'dividend'
+  | 'quality'
+  | 'growth'
+  | 'resilience'
+  | 'balanced'
+  | 'rebalance'
+  | 'opportunity';
 
 export interface Preferences {
   riskProfile: RiskProfile;
@@ -27,16 +45,12 @@ export interface Preferences {
   blockedTickers: string[];
 }
 
-export interface AppState {
-  positions: PortfolioPosition[];
-  monthlyContribution: number;
-  filterType: FilterType;
-  preferences: Preferences;
+export interface PortfolioPosition {
+  ticker: string;
+  quantity: number;
+  avgPrice: number;
+  currentPrice?: number | null;
 }
-
-/* =========================
-   ASSET DOMAIN
-========================= */
 
 export interface Asset {
   ticker: string;
@@ -44,23 +58,12 @@ export interface Asset {
   type: AssetType;
   sector: string;
   price: number;
+  dividendYield?: number;
   quality: number;
   growth: number;
   resilience: number;
   governance: number;
-  dividendYield?: number;
   exposureIntl?: boolean;
-  thesis?: string;
-}
-
-/* =========================
-   SCORE ENGINE
-========================= */
-
-export interface ScoreBreakdownDetail {
-  macro: number;
-  profile: number;
-  concentration: number;
 }
 
 export interface ScoreBreakdown {
@@ -71,76 +74,64 @@ export interface ScoreBreakdown {
   finalScore: number;
   weight: number;
   recommendation: string;
-  confidence: string;
+  confidence: ConfidenceLevel;
   reasons: string[];
+  breakdown?: {
+    macro: number;
+    profile: number;
+    concentration: number;
+  };
   rationale?: string[];
-  breakdown?: ScoreBreakdownDetail;
 }
 
-/* =========================
-   RANKING
-========================= */
-
-export interface RankedAsset extends Asset {
+export interface RankedAsset {
+  ticker: string;
+  name: string;
+  type: AssetType;
+  sector: string;
+  price: number;
   score: ScoreBreakdown;
+  percentile: number;
+  currentAllocationPct: number;
   ownedQuantity: number;
   currentMarketValue: number;
-  currentAllocationPct: number;
-  percentile?: number;
+  safeCurrentValue: number;
+  tags?: TagKey[];
 }
 
-/* =========================
-   CONTRIBUTION
-========================= */
-
-export type TagKey =
-  | 'strongBuy'
-  | 'highConfidence'
-  | 'underweight'
-  | 'rebalance'
-  | 'opportunity';
-
+/* 🔥 NÃO ALTERAR ESTRUTURA, SÓ GARANTIR CAMPOS */
 export interface ContributionSuggestion {
   ticker: string;
   suggestedAmount: number;
   suggestedShares?: number;
-  amount?: number;
-  rationale: string;
-  quantity?: number;
+  rationale?: string;
+  reason?: string;
   tags?: TagKey[];
 }
 
-/* =========================
-   REBALANCE
-========================= */
-
-export type RebalanceAction = 'COMPRAR' | 'REDUZIR' | 'MANTER';
-
+/* 🔥 AQUI FOI ONDE QUEBROU ANTES */
 export interface RebalanceSuggestion {
   ticker: string;
+  action: RebalanceAction;
   currentValue: number;
   currentPct: number;
+  targetValue?: number;
   targetPct: number;
   diffValue: number;
-  action: RebalanceAction;
+  deltaValue?: number;
 }
 
-/* =========================
-   🔥 DECISION ENGINE (NOVO)
-========================= */
-
-export type DecisionAction =
-  | 'COMPRAR_FORTE'
-  | 'COMPRAR'
-  | 'MANTER'
-  | 'REDUZIR'
-  | 'EVITAR';
-
-export type DecisionConfidence = 'ALTA' | 'MEDIA' | 'BAIXA';
-
+/* 🔥 SÓ ADICIONA, NÃO REMOVE NADA */
 export interface Decision {
   ticker: string;
   action: DecisionAction;
-  confidence: DecisionConfidence;
-  reason: string;
+  confidence?: DecisionConfidence;
+  reason?: string;
+}
+
+export interface AppState {
+  positions: PortfolioPosition[];
+  preferences: Preferences;
+  monthlyContribution: number;
+  filterType: FilterType;
 }

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { StatItem } from '../components/common/StatGrid'
 import { ASSETS } from '../data/assets'
 import {
   resolveB3ImportPositions,
   type B3ImportMode,
   type B3ParsedPosition,
 } from '../domain/import/b3Import'
-import type { PatrimonyHistory } from '../domain/history'
 import type {
   Asset,
   ContributionSuggestion,
@@ -18,43 +18,36 @@ import type {
   RiskProfile,
 } from '../domain/types'
 import {
-  aggregatePortfolio,
-  type AssetType as DashboardAssetType,
-  type ConcentrationDataItem,
-  type DistributionByAssetItem,
-  type DistributionByTypeItem,
-  type PortfolioPosition as AggregationPortfolioPosition,
-} from '../engine/dashboard/aggregatePortfolio'
+  buildDashboardAggregation,
+  buildDashboardAssetCatalogMap,
+  buildDashboardViewModel,
+  type DashboardAggregation,
+  type DashboardAssetCatalogMap,
+  type DashboardAssetPoint,
+  type DashboardConcentrationPoint,
+  type DashboardMetricPoint,
+  type DashboardTypePoint,
+} from '../engine/dashboard/buildDashboardViewModel'
 import { buildDecision } from '../engine/decision/buildDecision'
 import { usePersistentAppState } from '../hooks/usePersistentAppState'
 import { usePortfolioData } from '../hooks/usePortfolioData'
-import {
-  appendSnapshot,
-  loadPatrimonyHistory,
-  savePatrimonyHistory,
-} from '../services/patrimonyHistory'
 import { fetchPrices } from '../services/priceService'
 
 type PersistentAppState = ReturnType<typeof usePersistentAppState>
 type PersistentState = PersistentAppState['state']
 type PersistentActions = PersistentAppState['actions']
 type PortfolioData = ReturnType<typeof usePortfolioData>
+type PortfolioItem = PortfolioData['portfolio'][number]
 
-type DashboardTypePoint = DistributionByTypeItem
-type DashboardAssetPoint = DistributionByAssetItem
-type DashboardConcentrationPoint = ConcentrationDataItem
+type PatrimonySnapshot = Readonly<{
+  timestamp: number
+  total: number
+}>
 
-type DashboardMetricPoint = {
-  name: string
-  value: number
-}
+type PatrimonyHistory = PatrimonySnapshot[]
 
-type AggregatedDashboardData = {
-  totalInvested: number
-  distributionByType: DashboardTypePoint[]
-  distributionByAsset: DashboardAssetPoint[]
-  concentrationData: DashboardConcentrationPoint[]
-}
+const PATRIMONY_HISTORY_STORAGE_KEY = 'invest-smart-patrimony-history-v1'
+const PATRIMONY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 60 * 1000
 
 export interface HeaderViewModel {
   riskProfile: RiskProfile
@@ -74,6 +67,7 @@ export interface DashboardViewModel {
   performanceData: DashboardMetricPoint[]
   evolutionData: DashboardMetricPoint[]
   insights: string[]
+  statItems: StatItem[]
 }
 
 export interface ContributionViewModel {
@@ -112,167 +106,133 @@ export interface AppViewModel {
   rebalance: RebalanceViewModel
 }
 
-type AssetCatalogMap = Map<string, Asset>
-
-const VALID_DASHBOARD_TYPES: DashboardAssetType[] = [
-  'AÇÃO',
-  'FII',
-  'ETF',
-  'BDR',
-]
-
 function toSafeNumber(value: unknown): number {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : 0
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-function normalizeTicker(value: string): string {
-  return value.trim().toUpperCase()
+function isBrowser(): boolean {
+  return typeof window !== 'undefined'
 }
 
-function buildAssetCatalogMap(assets: Asset[]): AssetCatalogMap {
-  return new Map(assets.map((asset) => [normalizeTicker(asset.ticker), asset]))
-}
-
-function resolveAssetTypeForAggregation(
-  assetCatalog: AssetCatalogMap,
-  ticker: string
-): DashboardAssetType | null {
-  const asset = assetCatalog.get(normalizeTicker(ticker))
-
-  if (!asset) {
-    return null
+function isPatrimonySnapshot(value: unknown): value is PatrimonySnapshot {
+  if (!value || typeof value !== 'object') {
+    return false
   }
 
-  const rawType =
-    'type' in asset ? (asset as Asset & { type?: string }).type : undefined
+  const candidate = value as Partial<PatrimonySnapshot>
 
-  if (typeof rawType !== 'string' || rawType.trim().length === 0) {
-    return null
+  return (
+    typeof candidate.timestamp === 'number' &&
+    Number.isFinite(candidate.timestamp) &&
+    typeof candidate.total === 'number' &&
+    Number.isFinite(candidate.total)
+  )
+}
+
+function loadPatrimonyHistory(): PatrimonyHistory {
+  if (!isBrowser()) {
+    return []
   }
 
-  const normalizedType = rawType.trim().toUpperCase() as DashboardAssetType
+  try {
+    const raw = window.localStorage.getItem(PATRIMONY_HISTORY_STORAGE_KEY)
+    if (!raw) {
+      return []
+    }
 
-  return VALID_DASHBOARD_TYPES.includes(normalizedType)
-    ? normalizedType
-    : null
+    const parsed = JSON.parse(raw)
+
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter(isPatrimonySnapshot)
+  } catch {
+    return []
+  }
+}
+
+function savePatrimonyHistory(history: PatrimonyHistory): void {
+  if (!isBrowser()) {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      PATRIMONY_HISTORY_STORAGE_KEY,
+      JSON.stringify(history)
+    )
+  } catch {
+    // noop
+  }
+}
+
+function appendSnapshot(
+  history: PatrimonyHistory,
+  snapshot: PatrimonySnapshot
+): PatrimonyHistory {
+  const safeHistory = Array.isArray(history) ? history.filter(isPatrimonySnapshot) : []
+
+  const lastSnapshot = safeHistory[safeHistory.length - 1]
+
+  if (!lastSnapshot) {
+    return [snapshot]
+  }
+
+  const isSameValue = lastSnapshot.total === snapshot.total
+  const isTooSoon =
+    snapshot.timestamp - lastSnapshot.timestamp < PATRIMONY_SNAPSHOT_MIN_INTERVAL_MS
+
+  if (isSameValue && isTooSoon) {
+    return safeHistory
+  }
+
+  if (isTooSoon) {
+    return [
+      ...safeHistory.slice(0, -1),
+      {
+        timestamp: snapshot.timestamp,
+        total: snapshot.total,
+      },
+    ]
+  }
+
+  return [...safeHistory, snapshot]
+}
+
+function readPortfolioItemCurrentPrice(position: PortfolioItem): number | null {
+  const candidate = position as PortfolioItem & {
+    currentPrice?: unknown
+    price?: unknown
+  }
+
+  if (typeof candidate.currentPrice === 'number' && Number.isFinite(candidate.currentPrice)) {
+    return candidate.currentPrice
+  }
+
+  if (typeof candidate.price === 'number' && Number.isFinite(candidate.price)) {
+    return candidate.price
+  }
+
+  return null
+}
+
+function mapToBasePortfolioPosition(position: PortfolioItem): PortfolioPosition {
+  return {
+    ticker: position.ticker,
+    quantity: position.quantity,
+    avgPrice: position.avgPrice,
+    currentPrice: readPortfolioItemCurrentPrice(position),
+  }
 }
 
 function toBasePortfolioPositions(
   portfolio: PortfolioData['portfolio']
 ): PortfolioPosition[] {
-  return portfolio.map((position) => ({
-    ticker: position.ticker,
-    quantity: position.quantity,
-    avgPrice: position.avgPrice,
-    currentPrice: position.currentPrice ?? null,
-  }))
+  return portfolio.map(mapToBasePortfolioPosition)
 }
 
-function toAggregationPortfolioPositions(
-  portfolio: PortfolioData['portfolio'],
-  assetCatalog: AssetCatalogMap
-): AggregationPortfolioPosition[] {
-  return portfolio.map((position) => ({
-    ticker: position.ticker,
-    quantity: position.quantity,
-    avgPrice: position.avgPrice,
-    currentPrice: position.currentPrice ?? null,
-    assetType: resolveAssetTypeForAggregation(assetCatalog, position.ticker),
-    label: normalizeTicker(position.ticker),
-  }))
-}
-
-function buildPerformanceData(
-  totalInvested: number,
-  totalPatrimony: number
-): DashboardMetricPoint[] {
-  const safeInvested = toSafeNumber(totalInvested)
-  const safePatrimony = toSafeNumber(totalPatrimony)
-  const absoluteResult = safePatrimony - safeInvested
-  const percentageResult =
-    safeInvested > 0 ? (absoluteResult / safeInvested) * 100 : 0
-
-  return [
-    {
-      name: 'Investido',
-      value: safeInvested,
-    },
-    {
-      name: 'Patrimônio',
-      value: safePatrimony,
-    },
-    {
-      name: 'Resultado',
-      value: absoluteResult,
-    },
-    {
-      name: 'Resultado %',
-      value: percentageResult,
-    },
-  ]
-}
-
-function buildEvolutionData(
-  history: PatrimonyHistory,
-  currentTotalPatrimony: number
-): DashboardMetricPoint[] {
-  const safeHistory = Array.isArray(history) ? history : []
-  const groupedByDay = new Map<string, number>()
-
-  safeHistory
-    .filter((snapshot) => Number.isFinite(snapshot?.timestamp))
-    .filter((snapshot) => Number.isFinite(snapshot?.total))
-    .forEach((snapshot) => {
-      const dayKey = new Date(snapshot.timestamp).toLocaleDateString('pt-BR')
-      groupedByDay.set(dayKey, toSafeNumber(snapshot.total))
-    })
-
-  const normalizedHistory = Array.from(groupedByDay.entries()).map(
-    ([name, value]) => ({
-      name,
-      value,
-    })
-  )
-
-  if (normalizedHistory.length > 0) {
-    return normalizedHistory
-  }
-
-  return [
-    {
-      name: 'Atual',
-      value: toSafeNumber(currentTotalPatrimony),
-    },
-  ]
-}
-
-function buildDashboardInsights(decision: Decision[]): string[] {
-  const insights: string[] = []
-
-  const strongBuy = decision.find((item) => item.action === 'COMPRAR_FORTE')
-  const buy = decision.find((item) => item.action === 'COMPRAR')
-  const reduce = decision.find((item) => item.action === 'REDUZIR')
-  const avoid = decision.find((item) => item.action === 'EVITAR')
-
-  if (strongBuy) {
-    insights.push(`Forte oportunidade: ${strongBuy.ticker}`)
-  } else if (buy) {
-    insights.push(`Melhor compra no momento: ${buy.ticker}`)
-  }
-
-  if (reduce) {
-    insights.push(`Reduzir exposição em ${reduce.ticker}`)
-  }
-
-  if (avoid) {
-    insights.push(`Evitar ${avoid.ticker} por baixa atratividade`)
-  }
-
-  return insights
-}
-
-function createHeaderViewModel(
+function buildHeaderViewModel(
   state: PersistentState,
   actions: PersistentActions
 ): HeaderViewModel {
@@ -284,61 +244,7 @@ function createHeaderViewModel(
   }
 }
 
-function createDashboardAggregation(
-  portfolio: PortfolioData['portfolio'],
-  assetCatalog: AssetCatalogMap
-): AggregatedDashboardData {
-  const aggregationPositions = toAggregationPortfolioPositions(
-    portfolio,
-    assetCatalog
-  )
-
-  const aggregation = aggregatePortfolio(aggregationPositions)
-
-  return {
-    totalInvested: aggregation.totalInvested,
-    distributionByType: aggregation.distributionByType,
-    distributionByAsset: aggregation.distributionByAsset,
-    concentrationData: aggregation.concentrationData.slice(0, 10),
-  }
-}
-
-function createDashboardViewModel({
-  state,
-  rankedCount,
-  decision,
-  patrimonyHistory,
-  aggregation,
-}: {
-  state: PersistentState
-  rankedCount: number
-  decision: Decision[]
-  patrimonyHistory: PatrimonyHistory
-  aggregation: AggregatedDashboardData
-}): DashboardViewModel {
-  const totalPatrimony = aggregation.totalInvested
-  const performanceData = buildPerformanceData(
-    aggregation.totalInvested,
-    totalPatrimony
-  )
-  const evolutionData = buildEvolutionData(patrimonyHistory, totalPatrimony)
-  const insights = buildDashboardInsights(decision)
-
-  return {
-    totalInvested: aggregation.totalInvested,
-    monthlyContribution: state.monthlyContribution,
-    rankedCount,
-    totalPatrimony,
-    distributionByType: aggregation.distributionByType,
-    distributionByAsset: aggregation.distributionByAsset,
-    concentrationData: aggregation.concentrationData,
-    performanceData,
-    evolutionData,
-    insights,
-  }
-}
-
-function createContributionViewModel(
+function buildContributionViewModel(
   state: PersistentState,
   contribution: ContributionSuggestion[],
   actions: PersistentActions
@@ -348,6 +254,100 @@ function createContributionViewModel(
     contribution,
     onMonthlyContributionChange: actions.updateMonthlyContribution,
   }
+}
+
+function buildPortfolioViewModel(params: {
+  portfolio: PortfolioData['portfolio']
+  currentPositions: PortfolioPosition[]
+  actions: PersistentActions
+  onImportFromB3: (parsed: B3ParsedPosition[], mode: B3ImportMode) => void
+}): PortfolioViewModel {
+  const { portfolio, currentPositions, actions, onImportFromB3 } = params
+
+  return {
+    portfolio,
+    assets: ASSETS,
+    currentPositions,
+    onUpsertPosition: actions.upsertPosition,
+    onRemovePosition: actions.removePosition,
+    onImportFromB3,
+  }
+}
+
+function buildRankingViewModel(
+  ranking: RankedAsset[],
+  decision: Decision[],
+  state: PersistentState,
+  actions: PersistentActions
+): RankingViewModel {
+  return {
+    ranking,
+    decision,
+    filterType: state.filterType,
+    onFilterTypeChange: actions.updateFilterType,
+  }
+}
+
+function buildRebalanceViewModel(
+  rebalance: RebalanceSuggestion[],
+  alerts: string[]
+): RebalanceViewModel {
+  return {
+    rebalance,
+    alerts,
+  }
+}
+
+function buildDashboardStatItems(params: {
+  totalInvested: number
+  totalPatrimony: number
+  performanceData: DashboardMetricPoint[]
+}): StatItem[] {
+  const { totalInvested, totalPatrimony, performanceData } = params
+
+  const metricsByLabel = new Map(
+    performanceData.map((item) => [String(item.name ?? '').trim(), toSafeNumber(item.value)])
+  )
+
+  const readMetric = (label: string): number => metricsByLabel.get(label) ?? 0
+
+  return [
+    {
+      label: 'Investido',
+      value: toSafeNumber(totalInvested),
+      type: 'currency',
+    },
+    {
+      label: 'Patrimônio',
+      value: toSafeNumber(totalPatrimony),
+      type: 'currency',
+    },
+    {
+      label: 'Resultado',
+      value: readMetric('Resultado'),
+      type: 'currency',
+    },
+    {
+      label: 'Resultado %',
+      value: readMetric('Resultado %'),
+      type: 'percentage',
+    },
+    {
+      label: 'Rentabilidade mensal',
+      value: readMetric('Rentabilidade mensal'),
+      type: 'percentage',
+    },
+    {
+      label: 'Rentabilidade anual',
+      value: readMetric('Rentabilidade anual'),
+      type: 'percentage',
+    },
+    {
+      label: 'Volatilidade',
+      value: readMetric('Volatilidade'),
+      type: 'percentage',
+    },
+  ]
 }
 
 export const useAppViewModel = (): AppViewModel => {
@@ -377,8 +377,8 @@ export const useAppViewModel = (): AppViewModel => {
 
   const decision = useMemo<Decision[]>(() => buildDecision(ranking), [ranking])
 
-  const assetCatalog = useMemo<AssetCatalogMap>(
-    () => buildAssetCatalogMap(ASSETS),
+  const assetCatalog = useMemo<DashboardAssetCatalogMap>(
+    () => buildDashboardAssetCatalogMap(ASSETS),
     []
   )
 
@@ -386,6 +386,29 @@ export const useAppViewModel = (): AppViewModel => {
     () => toBasePortfolioPositions(portfolio),
     [portfolio]
   )
+
+  const dashboardAggregation = useMemo<DashboardAggregation>(
+    () => buildDashboardAggregation(currentPortfolioPositions, assetCatalog),
+    [currentPortfolioPositions, assetCatalog]
+  )
+
+  const totalPatrimony = dashboardAggregation.totalPatrimony
+
+  useEffect(() => {
+    if (!Number.isFinite(totalPatrimony) || totalPatrimony <= 0) {
+      return
+    }
+
+    const snapshot: PatrimonySnapshot = {
+      timestamp: Date.now(),
+      total: totalPatrimony,
+    }
+
+    const updatedHistory = appendSnapshot(patrimonyHistoryRef.current, snapshot)
+
+    patrimonyHistoryRef.current = updatedHistory
+    savePatrimonyHistory(updatedHistory)
+  }, [totalPatrimony])
 
   const handleImportFromB3 = useCallback(
     (parsed: B3ParsedPosition[], mode: B3ImportMode) => {
@@ -401,87 +424,53 @@ export const useAppViewModel = (): AppViewModel => {
   )
 
   const headerViewModel = useMemo<HeaderViewModel>(
-    () => createHeaderViewModel(state, actions),
-    [actions, state]
+    () => buildHeaderViewModel(state, actions),
+    [state, actions]
   )
 
-  const dashboardAggregation = useMemo<AggregatedDashboardData>(
-    () => createDashboardAggregation(portfolio, assetCatalog),
-    [assetCatalog, portfolio]
-  )
+  const dashboardViewModel = useMemo<DashboardViewModel>(() => {
+    const baseDashboard = buildDashboardViewModel({
+      monthlyContribution: state.monthlyContribution,
+      rankedCount: ranking.length,
+      decision,
+      patrimonyHistory: patrimonyHistoryRef.current,
+      aggregation: dashboardAggregation,
+    })
 
-  const totalPatrimony = dashboardAggregation.totalInvested
-
-  useEffect(() => {
-    if (!Number.isFinite(totalPatrimony) || totalPatrimony <= 0) {
-      return
-    }
-
-    const snapshot = {
-      timestamp: Date.now(),
-      total: totalPatrimony,
-    }
-
-    const updatedHistory = appendSnapshot(
-      patrimonyHistoryRef.current,
-      snapshot
-    )
-
-    patrimonyHistoryRef.current = updatedHistory
-    savePatrimonyHistory(updatedHistory)
-  }, [totalPatrimony])
-
-  const dashboardViewModel = useMemo<DashboardViewModel>(
-    () =>
-      createDashboardViewModel({
-        state,
-        rankedCount: ranking.length,
-        decision,
-        patrimonyHistory: patrimonyHistoryRef.current,
-        aggregation: dashboardAggregation,
+    return {
+      ...baseDashboard,
+      statItems: buildDashboardStatItems({
+        totalInvested: baseDashboard.totalInvested,
+        totalPatrimony: baseDashboard.totalPatrimony,
+        performanceData: baseDashboard.performanceData,
       }),
-    [dashboardAggregation, decision, ranking.length, state, totalPatrimony]
-  )
+    }
+  }, [state.monthlyContribution, ranking.length, decision, dashboardAggregation])
 
   const contributionViewModel = useMemo<ContributionViewModel>(
-    () => createContributionViewModel(state, contribution, actions),
-    [actions, contribution, state]
+    () => buildContributionViewModel(state, contribution, actions),
+    [state, contribution, actions]
   )
 
   const portfolioViewModel = useMemo<PortfolioViewModel>(
-    () => ({
-      portfolio,
-      assets: ASSETS,
-      currentPositions: currentPortfolioPositions,
-      onUpsertPosition: actions.upsertPosition,
-      onRemovePosition: actions.removePosition,
-      onImportFromB3: handleImportFromB3,
-    }),
-    [
-      actions.removePosition,
-      actions.upsertPosition,
-      currentPortfolioPositions,
-      handleImportFromB3,
-      portfolio,
-    ]
+    () =>
+      buildPortfolioViewModel({
+        portfolio,
+        currentPositions: currentPortfolioPositions,
+        actions,
+        onImportFromB3: handleImportFromB3,
+      }),
+    [portfolio, currentPortfolioPositions, actions, handleImportFromB3]
   )
 
   const rankingViewModel = useMemo<RankingViewModel>(
-    () => ({
-      ranking,
-      decision,
-      filterType: state.filterType,
-      onFilterTypeChange: actions.updateFilterType,
-    }),
-    [actions.updateFilterType, decision, ranking, state.filterType]
+    () => buildRankingViewModel(ranking, decision, state, actions),
+    [ranking, decision, state, actions]
   )
 
   const rebalanceViewModel = useMemo<RebalanceViewModel>(
-    () => ({
-      rebalance,
-      alerts,
-    }),
-    [alerts, rebalance]
+    () => buildRebalanceViewModel(rebalance, alerts),
+    [rebalance, alerts]
   )
 
   return useMemo<AppViewModel>(
@@ -494,9 +483,9 @@ export const useAppViewModel = (): AppViewModel => {
       rebalance: rebalanceViewModel,
     }),
     [
-      contributionViewModel,
-      dashboardViewModel,
       headerViewModel,
+      dashboardViewModel,
+      contributionViewModel,
       portfolioViewModel,
       rankingViewModel,
       rebalanceViewModel,

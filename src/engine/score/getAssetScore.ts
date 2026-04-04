@@ -21,12 +21,13 @@ const BASE_SCORE_WEIGHTS = {
 } as const;
 
 const CONCENTRATION_POLICY = {
-  warningThresholdPct: 18,
+  warningThresholdPct: 20,
   penaltyPerExtraPct: 1.2,
   maxPenalty: 12
 } as const;
 
 const BLOCKED_TICKER_PENALTY = 100;
+const PREFERRED_TYPE_BONUS = 2;
 
 const normalizeText = (value: string | undefined | null): string =>
   String(value ?? '')
@@ -41,11 +42,37 @@ const isPreferredType = (asset: Asset, preferences: Preferences): boolean =>
 const isBlockedTicker = (asset: Asset, preferences: Preferences): boolean =>
   preferences.blockedTickers.includes(asset.ticker);
 
-const calculateBaseScore = (asset: Asset): number =>
-  asset.quality * BASE_SCORE_WEIGHTS.quality +
-  asset.growth * BASE_SCORE_WEIGHTS.growth +
-  asset.resilience * BASE_SCORE_WEIGHTS.resilience +
-  asset.governance * BASE_SCORE_WEIGHTS.governance;
+const getPreferenceBonus = (
+  asset: Asset,
+  preferences: Preferences
+): Adjustment => {
+  if (isPreferredType(asset, preferences)) {
+    return {
+      value: PREFERRED_TYPE_BONUS,
+      reason: 'Tipo de ativo alinhado às preferências do usuário.'
+    };
+  }
+
+  return {
+    value: 0,
+    reason: 'Tipo de ativo sem bônus de preferência.'
+  };
+};
+
+export const calculateBaseScore = (asset: Asset): number => {
+  const quality = asset.quality ?? 0;
+  const growth = asset.growth ?? 0;
+  const resilience = asset.resilience ?? 0;
+  const governance = asset.governance ?? 0;
+
+  const rawScore =
+    quality * BASE_SCORE_WEIGHTS.quality +
+    growth * BASE_SCORE_WEIGHTS.growth +
+    resilience * BASE_SCORE_WEIGHTS.resilience +
+    governance * BASE_SCORE_WEIGHTS.governance;
+
+  return clamp(Number(rawScore.toFixed(2)), 0, 100);
+};
 
 const getMacroAdjustment = (
   asset: Asset,
@@ -59,6 +86,13 @@ const getMacroAdjustment = (
         return {
           value: -3,
           reason: 'FIIs tendem a sofrer mais em cenário de juros elevados.'
+        };
+      }
+
+      if (asset.growth >= 80) {
+        return {
+          value: -4,
+          reason: 'Ativos de crescimento tendem a ser penalizados em cenário de juros altos.'
         };
       }
 
@@ -116,25 +150,23 @@ const getProfileAdjustment = (
   asset: Asset,
   preferences: Preferences
 ): Adjustment => {
-  const preferredTypeBonus = isPreferredType(asset, preferences) ? 2 : -2;
-
   switch (preferences.riskProfile) {
     case 'CONSERVADOR':
       return {
-        value: preferredTypeBonus + (asset.resilience >= 80 ? 4 : -5),
-        reason: 'Perfil conservador prioriza resiliência e previsibilidade.'
+        value: (asset.quality >= 80 ? 3 : -2) + (asset.resilience >= 80 ? 3 : -3),
+        reason: 'Perfil conservador prioriza qualidade e resiliência.'
       };
 
     case 'ARROJADO':
       return {
-        value: preferredTypeBonus + (asset.growth >= 80 ? 4 : 0),
-        reason: 'Perfil arrojado aceita mais volatilidade em troca de crescimento.'
+        value: (asset.growth >= 80 ? 5 : -1) + (asset.quality >= 70 ? 1 : 0),
+        reason: 'Perfil arrojado prioriza crescimento com tolerância maior a volatilidade.'
       };
 
     case 'EQUILIBRADO':
     default:
       return {
-        value: preferredTypeBonus + 1,
+        value: 1,
         reason: 'Perfil equilibrado busca qualidade com diversificação.'
       };
   }
@@ -202,19 +234,30 @@ const getConfidence = (
 };
 
 const buildReasons = (
+  preferenceBonus: Adjustment,
   macroAdjustment: Adjustment,
   profileAdjustment: Adjustment,
   concentrationPenalty: Adjustment,
   blockedTickerAdjustment: Adjustment
 ): string[] => {
-  const reasons = [macroAdjustment.reason, profileAdjustment.reason];
+  if (blockedTickerAdjustment.value < 0) {
+    return [
+      blockedTickerAdjustment.reason,
+      macroAdjustment.reason,
+      profileAdjustment.reason
+    ];
+  }
+
+  const reasons: string[] = [];
+
+  if (preferenceBonus.value > 0) {
+    reasons.push(preferenceBonus.reason);
+  }
+
+  reasons.push(macroAdjustment.reason, profileAdjustment.reason);
 
   if (concentrationPenalty.value > 0) {
     reasons.push(concentrationPenalty.reason);
-  }
-
-  if (blockedTickerAdjustment.value < 0) {
-    reasons.push(blockedTickerAdjustment.reason);
   }
 
   return reasons;
@@ -226,6 +269,7 @@ export const getAssetScore = (
   currentAllocationPct: number
 ): ScoreBreakdown => {
   const baseScore = calculateBaseScore(asset);
+  const preferenceBonus = getPreferenceBonus(asset, preferences);
   const macroAdjustment = getMacroAdjustment(asset, preferences.macroScenario);
   const profileAdjustment = getProfileAdjustment(asset, preferences);
   const blockedTickerAdjustment = getBlockedTickerAdjustment(asset, preferences);
@@ -233,16 +277,17 @@ export const getAssetScore = (
 
   const rawFinalScore =
     baseScore +
+    preferenceBonus.value +
     macroAdjustment.value +
     profileAdjustment.value +
     blockedTickerAdjustment.value -
     concentrationPenalty.value;
 
-  const finalScore = clamp(rawFinalScore, 0, 100);
+  const finalScore = clamp(Number(rawFinalScore.toFixed(2)), 0, 100);
 
   return {
     baseScore: Number(baseScore.toFixed(2)),
-    preferenceBonus: Number(profileAdjustment.value.toFixed(2)),
+    preferenceBonus: Number(preferenceBonus.value.toFixed(2)),
     macroAdjustment: Number(macroAdjustment.value.toFixed(2)),
     concentrationPenalty: Number(concentrationPenalty.value.toFixed(2)),
     finalScore: Number(finalScore.toFixed(2)),
@@ -250,6 +295,7 @@ export const getAssetScore = (
     recommendation: getRecommendationLabel(finalScore),
     confidence: getConfidence(asset, finalScore),
     reasons: buildReasons(
+      preferenceBonus,
       macroAdjustment,
       profileAdjustment,
       concentrationPenalty,
@@ -270,6 +316,8 @@ export const enrichAssetWithScore = (
     score: getAssetScore(asset, preferences, currentAllocationPct),
     currentAllocationPct,
     currentMarketValue,
-    ownedQuantity
+    safeCurrentValue: currentMarketValue,
+    ownedQuantity,
+    percentile: 0
   };
 };
