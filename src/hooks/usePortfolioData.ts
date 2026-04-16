@@ -71,7 +71,11 @@ function buildTrackedTickers(positions: readonly PortfolioPosition[]): string[] 
     }
   }
 
-  return Array.from(unique)
+  return Array.from(unique).sort()
+}
+
+function buildTrackedTickersKey(tickers: readonly string[]): string {
+  return tickers.join('|')
 }
 
 function sanitizePriceMap(input: unknown): MarketPriceMap {
@@ -225,8 +229,21 @@ export const usePortfolioData = (
     [state.positions]
   )
 
+  const trackedTickersKey = useMemo(
+    () => buildTrackedTickersKey(trackedTickers),
+    [trackedTickers]
+  )
+
+  const trackedTickersRef = useRef<string[]>(trackedTickers)
+
+  useEffect(() => {
+    trackedTickersRef.current = trackedTickers
+  }, [trackedTickersKey])
+
   const refreshPrices = useCallback(async (): Promise<void> => {
-    if (trackedTickers.length === 0) {
+    const currentTickers = trackedTickersRef.current
+
+    if (currentTickers.length === 0) {
       setLivePrices({})
       setPriceStatus('idle')
       setPriceError(null)
@@ -242,7 +259,7 @@ export const usePortfolioData = (
     setPriceError(null)
 
     try {
-      const fetchedPrices = await priceLoaderRef.current(trackedTickers)
+      const fetchedPrices = await priceLoaderRef.current(currentTickers)
       const sanitizedPrices = sanitizePriceMap(fetchedPrices)
 
       if (currentRequestId !== requestIdRef.current) {
@@ -250,7 +267,9 @@ export const usePortfolioData = (
       }
 
       if (Object.keys(sanitizedPrices).length === 0) {
-        setPriceStatus((previous) => (previous === 'success' ? 'success' : 'error'))
+        setPriceStatus((previous) =>
+          previous === 'success' ? 'success' : 'error'
+        )
         setPriceError('Nenhum preço válido retornado.')
         return
       }
@@ -267,13 +286,15 @@ export const usePortfolioData = (
         return
       }
 
-      setPriceStatus((previous) => (previous === 'success' ? 'success' : 'error'))
+      setPriceStatus((previous) =>
+        previous === 'success' ? 'success' : 'error'
+      )
       setPriceError(buildPriceErrorMessage(error))
     }
-  }, [trackedTickers])
+  }, [trackedTickersKey])
 
   useEffect(() => {
-    if (trackedTickers.length === 0) {
+    if (trackedTickersKey.length === 0) {
       setLivePrices({})
       setPriceStatus('idle')
       setPriceError(null)
@@ -281,27 +302,16 @@ export const usePortfolioData = (
       return
     }
 
-    let isMounted = true
-
-    const runRefresh = async (): Promise<void> => {
-      if (!isMounted) {
-        return
-      }
-
-      await refreshPrices()
-    }
-
-    void runRefresh()
+    void refreshPrices()
 
     const intervalId = window.setInterval(() => {
-      void runRefresh()
+      void refreshPrices()
     }, PRICE_REFRESH_INTERVAL_MS)
 
     return () => {
-      isMounted = false
       window.clearInterval(intervalId)
     }
-  }, [trackedTickers, refreshPrices])
+  }, [trackedTickersKey, refreshPrices])
 
   const pricedAssets = useMemo(
     () =>
@@ -337,8 +347,12 @@ export const usePortfolioData = (
   )
 
   const safePreferences = useMemo(
-    () => buildSafePreferences(state.preferences),
-    [state.preferences]
+    () =>
+      buildSafePreferences({
+        riskProfile: state.preferences.riskProfile,
+        macroScenario: state.preferences.macroScenario,
+      }),
+    [state.preferences.riskProfile, state.preferences.macroScenario]
   )
 
   const ranking = useMemo(
@@ -346,20 +360,11 @@ export const usePortfolioData = (
     [pricedAssets, state.positions, safePreferences]
   )
 
-  const contribution = useMemo(
-    () => buildContribution(ranking),
-    [ranking]
-  )
+  const contribution = useMemo(() => buildContribution(ranking), [ranking])
 
-  const rebalance = useMemo(
-    () => buildRebalance(ranking),
-    [ranking]
-  )
+  const rebalance = useMemo(() => buildRebalance(ranking), [ranking])
 
-  const alerts = useMemo(
-    () => buildAlerts(rebalance),
-    [rebalance]
-  )
+  const alerts = useMemo(() => buildAlerts(rebalance), [rebalance])
 
   return {
     ranking,
