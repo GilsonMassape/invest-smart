@@ -358,6 +358,22 @@ function normalizeInsights(insights: string[]): string[] {
     .filter((insight) => insight.length > 0)
 }
 
+function splitCurrency(formattedValue: string): { prefix: string; amount: string } {
+  const normalized = formattedValue.trim()
+
+  if (!normalized.startsWith('R$')) {
+    return {
+      prefix: '',
+      amount: normalized,
+    }
+  }
+
+  return {
+    prefix: 'R$',
+    amount: normalized.replace(/^R\$\s*/, ''),
+  }
+}
+
 function SectionHeader({
   title,
   subtitle,
@@ -416,18 +432,68 @@ function EmptyState({
   )
 }
 
-function MetricCard({ item }: { item: DashboardMetricItem }) {
+function CurrencyMetricValue({
+  value,
+  toneClass,
+}: {
+  value: string
+  toneClass: string
+}) {
+  const { prefix, amount } = splitCurrency(value)
+
   return (
-    <div className="rounded-2xl border border-slate-200/50 bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100/50">
+    <div className="min-w-0">
+      <div className="flex items-end gap-2">
+        {prefix ? (
+          <span className={`shrink-0 text-base font-semibold leading-none md:text-lg ${toneClass}`}>
+            {prefix}
+          </span>
+        ) : null}
+
+        <span
+          className={`block min-w-0 whitespace-nowrap text-[clamp(1.55rem,1.9vw,2.15rem)] font-semibold leading-none tracking-tight tabular-nums ${toneClass}`}
+          title={value}
+        >
+          {amount}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function DefaultMetricValue({
+  value,
+  toneClass,
+}: {
+  value: string
+  toneClass: string
+}) {
+  return (
+    <p
+      className={`whitespace-nowrap text-[clamp(1.45rem,1.7vw,2rem)] font-semibold leading-none tracking-tight tabular-nums ${toneClass}`}
+      title={value}
+    >
+      {value}
+    </p>
+  )
+}
+
+function MetricCard({ item }: { item: DashboardMetricItem }) {
+  const formattedValue = formatMetricValue(item.value, item.type)
+  const toneClass = getMetricToneClass(item)
+
+  return (
+    <div className="group relative w-[190px] shrink-0 overflow-hidden rounded-2xl border border-slate-200/50 bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100/50 md:w-[210px]">
       <div className="space-y-1.5">
         <p className="text-[10px] font-medium uppercase tracking-[0.32em] text-slate-400">
           {item.label}
         </p>
-        <p
-          className={`break-words text-xl font-semibold tracking-tight md:text-2xl ${getMetricToneClass(item)}`}
-        >
-          {formatMetricValue(item.value, item.type)}
-        </p>
+
+        {item.type === 'currency' ? (
+          <CurrencyMetricValue value={formattedValue} toneClass={toneClass} />
+        ) : (
+          <DefaultMetricValue value={formattedValue} toneClass={toneClass} />
+        )}
       </div>
     </div>
   )
@@ -658,7 +724,7 @@ export function Dashboard(props: DashboardProps) {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_1.95fr]">
+      <div className="grid gap-6 xl:grid-cols-[1.05fr_minmax(0,1.95fr)]">
         <SurfaceBlock className="h-full">
           <SectionHeader
             title="Insights automáticos"
@@ -684,22 +750,24 @@ export function Dashboard(props: DashboardProps) {
           </div>
         </SurfaceBlock>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-          {hasMetricItems ? (
-            metricItems.map((item) => (
-              <MetricCard
-                key={item.label}
-                item={item}
-              />
-            ))
-          ) : (
-            <div className="sm:col-span-2 lg:col-span-4 xl:col-span-7">
-              <EmptyState
-                title="Indicadores indisponíveis"
-                message="Ainda não há dados suficientes para montar o resumo executivo."
-              />
-            </div>
-          )}
+        <div className="-mx-1 overflow-x-auto px-1 pb-2">
+          <div className="flex min-w-full gap-4">
+            {hasMetricItems ? (
+              metricItems.map((item) => (
+                <MetricCard
+                  key={item.label}
+                  item={item}
+                />
+              ))
+            ) : (
+              <div className="min-w-full">
+                <EmptyState
+                  title="Indicadores indisponíveis"
+                  message="Ainda não há dados suficientes para montar o resumo executivo."
+                />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
