@@ -29,7 +29,7 @@ type ApiResponse = {
 
 const BRAPI_BASE_URL = 'https://brapi.dev/api/quote'
 const REQUEST_TIMEOUT_MS = 8000
-const MAX_TICKERS_PER_REQUEST = 20
+const MAX_TICKERS_PER_REQUEST = 1
 
 function normalizeTicker(ticker: string): string {
   return ticker.trim().toUpperCase()
