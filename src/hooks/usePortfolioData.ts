@@ -19,7 +19,6 @@ import { buildSafePreferences } from '../engine/preferences/buildSafePreferences
 import { buildRanking } from '../engine/ranking/buildRanking'
 import { buildRebalance } from '../engine/rebalance/buildRebalance'
 import * as priceServiceModule from '../services/priceService'
-import { fetchPrices as fetchRemotePrices } from '../infra/pricing/fetchPrices'
 
 type InputState = {
   positions: PortfolioPosition[]
@@ -46,7 +45,7 @@ type UsePortfolioDataResult = {
 
 type MarketPriceMap = Record<string, number>
 
-type PriceLoader = (tickers: string[]) => Promise<MarketPriceMap>
+type PriceLoader = (tickers: string[]) => Promise<unknown>
 
 const PRICE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
@@ -91,27 +90,29 @@ function sanitizePriceMap(input: unknown): MarketPriceMap {
       continue
     }
 
-    if (value && typeof value === 'object') {
-      const nestedRecord = value as Record<string, unknown>
-      const nestedCandidates = [
-        nestedRecord.price,
-        nestedRecord.currentPrice,
-        nestedRecord.close,
-        nestedRecord.last,
-        nestedRecord.value,
-        nestedRecord.regularMarketPrice,
-        nestedRecord.c,
-      ]
+    if (!value || typeof value !== 'object') {
+      continue
+    }
 
-      for (const candidate of nestedCandidates) {
-        if (
-          typeof candidate === 'number' &&
-          Number.isFinite(candidate) &&
-          candidate > 0
-        ) {
-          output[normalizeTicker(ticker)] = candidate
-          break
-        }
+    const nestedRecord = value as Record<string, unknown>
+    const nestedCandidates = [
+      nestedRecord.price,
+      nestedRecord.currentPrice,
+      nestedRecord.close,
+      nestedRecord.last,
+      nestedRecord.value,
+      nestedRecord.regularMarketPrice,
+      nestedRecord.c,
+    ]
+
+    for (const candidate of nestedCandidates) {
+      if (
+        typeof candidate === 'number' &&
+        Number.isFinite(candidate) &&
+        candidate > 0
+      ) {
+        output[normalizeTicker(ticker)] = candidate
+        break
       }
     }
   }
@@ -121,11 +122,6 @@ function sanitizePriceMap(input: unknown): MarketPriceMap {
 
 function isPriceLoader(value: unknown): value is PriceLoader {
   return typeof value === 'function'
-}
-
-async function fetchPricesFromInfra(tickers: string[]): Promise<MarketPriceMap> {
-  const result = await fetchRemotePrices(tickers)
-  return sanitizePriceMap(result)
 }
 
 function resolvePriceLoader(): PriceLoader {
@@ -138,14 +134,14 @@ function resolvePriceLoader(): PriceLoader {
       : undefined
 
   const candidates: unknown[] = [
+    moduleRecord.fetchPrices,
     moduleRecord.getPrices,
     moduleRecord.loadPrices,
-    moduleRecord.fetchPrices,
     moduleRecord.getLatestPrices,
     moduleRecord.resolvePrices,
+    defaultExport?.fetchPrices,
     defaultExport?.getPrices,
     defaultExport?.loadPrices,
-    defaultExport?.fetchPrices,
     defaultExport?.getLatestPrices,
     defaultExport?.resolvePrices,
   ]
@@ -156,7 +152,7 @@ function resolvePriceLoader(): PriceLoader {
     }
   }
 
-  return fetchPricesFromInfra
+  throw new Error('Serviço de preços indisponível.')
 }
 
 function getAssetFallbackPrice(asset: unknown): number {
@@ -222,23 +218,19 @@ export const usePortfolioData = (
   const [lastPriceUpdateAt, setLastPriceUpdateAt] = useState<number | null>(null)
 
   const requestIdRef = useRef(0)
-  const priceLoaderRef = useRef<PriceLoader>(resolvePriceLoader())
-
   const trackedTickers = useMemo(
     () => buildTrackedTickers(state.positions),
     [state.positions]
   )
-
   const trackedTickersKey = useMemo(
     () => buildTrackedTickersKey(trackedTickers),
     [trackedTickers]
   )
-
   const trackedTickersRef = useRef<string[]>(trackedTickers)
 
   useEffect(() => {
     trackedTickersRef.current = trackedTickers
-  }, [trackedTickersKey])
+  }, [trackedTickers])
 
   const refreshPrices = useCallback(async (): Promise<void> => {
     const currentTickers = trackedTickersRef.current
@@ -259,7 +251,8 @@ export const usePortfolioData = (
     setPriceError(null)
 
     try {
-      const fetchedPrices = await priceLoaderRef.current(currentTickers)
+      const priceLoader = resolvePriceLoader()
+      const fetchedPrices = await priceLoader(currentTickers)
       const sanitizedPrices = sanitizePriceMap(fetchedPrices)
 
       if (currentRequestId !== requestIdRef.current) {
@@ -291,7 +284,7 @@ export const usePortfolioData = (
       )
       setPriceError(buildPriceErrorMessage(error))
     }
-  }, [trackedTickersKey])
+  }, [])
 
   useEffect(() => {
     if (trackedTickersKey.length === 0) {

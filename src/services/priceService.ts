@@ -1,13 +1,3 @@
-import {
-  fetchPrices as fetchRemotePrices,
-  type PriceMap,
-} from '../infra/pricing/fetchPrices'
-import {
-  getCachedPrices,
-  getMissingTickers,
-  savePricesToCache,
-} from '../infra/pricing/priceCache'
-
 export type MarketPriceMap = Record<string, number>
 
 export type FetchPricesOptions = Readonly<{
@@ -15,7 +5,23 @@ export type FetchPricesOptions = Readonly<{
   forceRefresh?: boolean
 }>
 
+type ApiPriceValue =
+  | number
+  | null
+  | {
+      price?: number | null
+      currentPrice?: number | null
+      close?: number | null
+      last?: number | null
+      value?: number | null
+      regularMarketPrice?: number | null
+      c?: number | null
+    }
+
+type ApiPriceMap = Record<string, ApiPriceValue>
+
 const CACHE_TTL_MS = 1000 * 60 * 5
+const API_PRICES_ENDPOINT = '/api/prices'
 
 function normalizeTicker(ticker: string): string {
   return ticker.trim().toUpperCase()
@@ -36,14 +42,47 @@ function toPositiveNumber(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
-function filterValidPrices(prices: PriceMap | MarketPriceMap): MarketPriceMap {
+function readNestedPrice(value: Record<string, unknown>): number | null {
+  const candidates = [
+    value.price,
+    value.currentPrice,
+    value.close,
+    value.last,
+    value.value,
+    value.regularMarketPrice,
+    value.c,
+  ]
+
+  for (const candidate of candidates) {
+    const safeNumber = toPositiveNumber(candidate)
+
+    if (safeNumber !== null) {
+      return safeNumber
+    }
+  }
+
+  return null
+}
+
+function filterValidPrices(
+  prices: ApiPriceMap | MarketPriceMap | Record<string, unknown>
+): MarketPriceMap {
   const marketPrices: MarketPriceMap = {}
 
-  for (const [ticker, price] of Object.entries(prices)) {
-    const safePrice = toPositiveNumber(price)
+  for (const [ticker, value] of Object.entries(prices)) {
+    const directPrice = toPositiveNumber(value)
 
-    if (safePrice !== null) {
-      marketPrices[normalizeTicker(ticker)] = safePrice
+    if (directPrice !== null) {
+      marketPrices[normalizeTicker(ticker)] = directPrice
+      continue
+    }
+
+    if (value && typeof value === 'object') {
+      const nestedPrice = readNestedPrice(value as Record<string, unknown>)
+
+      if (nestedPrice !== null) {
+        marketPrices[normalizeTicker(ticker)] = nestedPrice
+      }
     }
   }
 
@@ -57,6 +96,103 @@ function mergePriceMaps(
   return {
     ...secondary,
     ...primary,
+  }
+}
+
+function buildStorageKey(ticker: string): string {
+  return `invest-smart.price-cache.${normalizeTicker(ticker)}`
+}
+
+function getNow(): number {
+  return Date.now()
+}
+
+function loadCachedPrice(
+  ticker: string,
+  ttlMs: number
+): number | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(buildStorageKey(ticker))
+
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as {
+      value?: unknown
+      updatedAt?: unknown
+    }
+
+    const value = toPositiveNumber(parsed.value)
+    const updatedAt = Number(parsed.updatedAt)
+
+    if (value === null || !Number.isFinite(updatedAt) || updatedAt <= 0) {
+      return null
+    }
+
+    if (getNow() - updatedAt > ttlMs) {
+      return null
+    }
+
+    return value
+  } catch {
+    return null
+  }
+}
+
+function getCachedPrices(
+  tickers: readonly string[],
+  ttlMs: number
+): MarketPriceMap {
+  const cachedPrices: MarketPriceMap = {}
+
+  for (const ticker of tickers) {
+    const cachedPrice = loadCachedPrice(ticker, ttlMs)
+
+    if (cachedPrice !== null) {
+      cachedPrices[normalizeTicker(ticker)] = cachedPrice
+    }
+  }
+
+  return cachedPrices
+}
+
+function getMissingTickers(
+  tickers: readonly string[],
+  ttlMs: number
+): string[] {
+  return tickers.filter((ticker) => loadCachedPrice(ticker, ttlMs) === null)
+}
+
+function savePricesToCache(prices: MarketPriceMap): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const updatedAt = getNow()
+
+  for (const [ticker, value] of Object.entries(prices)) {
+    const safePrice = toPositiveNumber(value)
+
+    if (safePrice === null) {
+      continue
+    }
+
+    try {
+      window.localStorage.setItem(
+        buildStorageKey(ticker),
+        JSON.stringify({
+          value: safePrice,
+          updatedAt,
+        })
+      )
+    } catch {
+      // noop
+    }
   }
 }
 
@@ -83,7 +219,42 @@ function loadCachedPrices(
     return {}
   }
 
-  return filterValidPrices(getCachedPrices(normalizedTickers, ttlMs))
+  return getCachedPrices(normalizedTickers, ttlMs)
+}
+
+function buildApiUrl(tickers: readonly string[]): string {
+  const query = new URLSearchParams({
+    tickers: tickers.join(','),
+  })
+
+  return `${API_PRICES_ENDPOINT}?${query.toString()}`
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+  try {
+    const contentType = response.headers.get('content-type') ?? ''
+
+    if (contentType.includes('application/json')) {
+      const payload = (await response.json()) as {
+        message?: unknown
+        error?: unknown
+      }
+
+      if (typeof payload.message === 'string' && payload.message.trim().length > 0) {
+        return payload.message.trim()
+      }
+
+      if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
+        return payload.error.trim()
+      }
+
+      return ''
+    }
+
+    return (await response.text()).trim()
+  } catch {
+    return ''
+  }
 }
 
 async function fetchRemoteValidPrices(
@@ -93,8 +264,25 @@ async function fetchRemoteValidPrices(
     return {}
   }
 
-  const remotePrices = await fetchRemotePrices(tickers)
-  return filterValidPrices(remotePrices)
+  const response = await fetch(buildApiUrl(tickers), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    const details = await readErrorMessage(response)
+
+    throw new Error(
+      `Price request failed with status ${response.status}${
+        details ? `: ${details}` : ''
+      }`
+    )
+  }
+
+  const payload = (await response.json()) as ApiPriceMap
+  return filterValidPrices(payload)
 }
 
 export async function fetchPrices(
