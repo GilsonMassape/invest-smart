@@ -78,26 +78,20 @@ function getValueToneClass(label: string, value: number): string {
   return 'text-slate-950'
 }
 
-function getGridColumnsClass(itemCount: number): string {
-  if (itemCount <= 1) return 'grid-cols-1'
-  if (itemCount === 2) return 'grid-cols-1 sm:grid-cols-2'
-  if (itemCount === 3) return 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'
-  if (itemCount === 4) return 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4'
-  if (itemCount <= 6) return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6'
+function splitCurrency(formattedValue: string): { prefix: string; amount: string } {
+  const normalized = formattedValue.trim()
 
-  return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7'
-}
-
-function getValueTextClass(type: StatValueType): string {
-  if (type === 'currency') {
-    return 'whitespace-nowrap text-[clamp(1.5rem,2vw,2.1rem)]'
+  if (!normalized.startsWith('R$')) {
+    return {
+      prefix: '',
+      amount: normalized,
+    }
   }
 
-  if (type === 'percentage') {
-    return 'whitespace-nowrap text-[clamp(1.45rem,1.9vw,2rem)]'
+  return {
+    prefix: 'R$',
+    amount: normalized.replace(/^R\$\s*/, ''),
   }
-
-  return 'whitespace-nowrap text-[clamp(1.45rem,1.9vw,2rem)]'
 }
 
 function EmptyState() {
@@ -108,16 +102,55 @@ function EmptyState() {
   )
 }
 
+function CurrencyValue({ value, toneClass }: { value: string; toneClass: string }) {
+  const { prefix, amount } = splitCurrency(value)
+
+  return (
+    <div className="min-w-0">
+      <div className="flex items-end gap-2">
+        {prefix ? (
+          <span className={`shrink-0 text-base font-semibold leading-none md:text-lg ${toneClass}`}>
+            {prefix}
+          </span>
+        ) : null}
+
+        <span
+          className={`block min-w-0 whitespace-nowrap text-[clamp(1.55rem,2vw,2.15rem)] font-semibold leading-none tracking-tight tabular-nums ${toneClass}`}
+          title={value}
+        >
+          {amount}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function DefaultValue({
+  value,
+  toneClass,
+}: {
+  value: string
+  toneClass: string
+}) {
+  return (
+    <p
+      className={`whitespace-nowrap text-[clamp(1.45rem,1.8vw,2rem)] font-semibold leading-none tracking-tight tabular-nums ${toneClass}`}
+      title={value}
+    >
+      {value}
+    </p>
+  )
+}
+
 function StatCard({ item }: { item: StatItem }) {
   const formattedValue = formatValue(item.value, item.type)
   const valueToneClass = getValueToneClass(item.label, item.value)
-  const valueTextClass = getValueTextClass(item.type)
 
   return (
-    <div className="group relative min-w-[170px] overflow-hidden rounded-2xl border border-slate-200/60 bg-white px-4 py-4 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_6px_18px_rgba(0,0,0,0.04)] ring-1 ring-slate-100/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_2px_8px_rgba(0,0,0,0.05),0_12px_28px_rgba(0,0,0,0.08)] md:min-w-0 md:px-5 md:py-5">
+    <div className="group relative w-[190px] shrink-0 overflow-hidden rounded-2xl border border-slate-200/60 bg-white px-4 py-4 shadow-[0_1px_2px_rgba(0,0,0,0.03),0_6px_18px_rgba(0,0,0,0.04)] ring-1 ring-slate-100/60 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_2px_8px_rgba(0,0,0,0.05),0_12px_28px_rgba(0,0,0,0.08)] md:w-[210px] md:px-5 md:py-5">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-slate-200 to-transparent opacity-70" />
 
-      <div className="flex min-h-[96px] flex-col justify-between gap-3 md:min-h-[104px]">
+      <div className="flex min-h-[104px] flex-col justify-between gap-4">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-400">
             {item.label}
@@ -125,12 +158,17 @@ function StatCard({ item }: { item: StatItem }) {
         </div>
 
         <div className="space-y-2">
-          <p
-            className={`overflow-hidden text-ellipsis font-semibold leading-none tracking-tight ${valueTextClass} ${valueToneClass}`}
-            title={formattedValue}
-          >
-            {formattedValue}
-          </p>
+          {item.type === 'currency' ? (
+            <CurrencyValue
+              value={formattedValue}
+              toneClass={valueToneClass}
+            />
+          ) : (
+            <DefaultValue
+              value={formattedValue}
+              toneClass={valueToneClass}
+            />
+          )}
 
           <div className="h-1.5 w-10 rounded-full bg-slate-100 transition-colors duration-200 group-hover:bg-slate-200" />
         </div>
@@ -147,10 +185,8 @@ export const StatGrid = ({ items }: Props) => {
   }
 
   return (
-    <div className="-mx-1 overflow-x-auto px-1 pb-1">
-      <div
-        className={`grid min-w-max gap-4 md:min-w-0 ${getGridColumnsClass(normalizedItems.length)}`}
-      >
+    <div className="-mx-1 overflow-x-auto px-1 pb-2">
+      <div className="flex min-w-full gap-4">
         {normalizedItems.map((item) => (
           <StatCard
             key={`${item.label}-${item.type}`}
