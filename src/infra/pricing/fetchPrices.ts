@@ -4,14 +4,22 @@ export type PriceMap = Record<string, PriceValue>
 
 type BrapiQuoteResult = Readonly<{
   symbol?: string
-  regularMarketPrice?: number
-  close?: number
-  previousClose?: number
-}>
+  regularMarketPrice?: number | string | null
+  close?: number | string | null
+  previousClose?: number | string | null
+}> &
+  Record<string, unknown>
+
+type BrapiErrorPayload = Readonly<{
+  error?: boolean
+  message?: string
+}> &
+  Record<string, unknown>
 
 type BrapiResponse = Readonly<{
   results?: BrapiQuoteResult[]
-}>
+}> &
+  BrapiErrorPayload
 
 const BRAPI_BASE_URL = 'https://brapi.dev/api/quote'
 const REQUEST_TIMEOUT_MS = 8000
@@ -22,8 +30,16 @@ function toSafeNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function isPositivePrice(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
 function normalizeTicker(ticker: string): string {
   return ticker.trim().toUpperCase()
+}
+
+function normalizeTickerKey(value: string): string {
+  return normalizeTicker(value).replace(/[^A-Z0-9]/g, '')
 }
 
 function uniqueTickers(tickers: readonly string[]): string[] {
@@ -82,11 +98,39 @@ function buildBrapiUrl(tickers: readonly string[]): string {
 }
 
 function extractQuotePrice(result: BrapiQuoteResult): number | null {
-  return (
+  const resolved =
     toSafeNumber(result.regularMarketPrice) ??
     toSafeNumber(result.close) ??
     toSafeNumber(result.previousClose)
-  )
+
+  return isPositivePrice(resolved) ? resolved : null
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function extractResponseMessage(payload: unknown): string | null {
+  if (!isObjectRecord(payload)) {
+    return null
+  }
+
+  const message = payload.message
+  return typeof message === 'string' && message.trim().length > 0
+    ? message.trim()
+    : null
+}
+
+function buildRequestedKeyMap(
+  requestedTickers: readonly string[]
+): Map<string, string> {
+  const keyMap = new Map<string, string>()
+
+  for (const ticker of requestedTickers) {
+    keyMap.set(normalizeTickerKey(ticker), ticker)
+  }
+
+  return keyMap
 }
 
 function parseBrapiResponse(
@@ -95,24 +139,67 @@ function parseBrapiResponse(
 ): PriceMap {
   const requestedMap = buildEmptyPriceMap(requestedTickers)
 
-  if (!payload || typeof payload !== 'object') {
+  if (!isObjectRecord(payload)) {
+    console.error('❌ BRAPI retornou payload inválido', payload)
     return requestedMap
   }
 
   const response = payload as BrapiResponse
+
+  if (response.error === true) {
+    console.error(
+      '❌ BRAPI retornou erro de aplicação',
+      extractResponseMessage(response) ?? 'sem mensagem'
+    )
+    return requestedMap
+  }
+
   const results = Array.isArray(response.results) ? response.results : []
 
-  for (const result of results) {
-    const symbol =
-      typeof result.symbol === 'string'
-        ? normalizeTicker(result.symbol)
-        : null
+  if (results.length === 0) {
+    console.error(
+      '❌ BRAPI retornou resposta sem resultados',
+      extractResponseMessage(response) ?? 'sem mensagem'
+    )
+    return requestedMap
+  }
 
-    if (!symbol || !(symbol in requestedMap)) {
+  const requestedKeyMap = buildRequestedKeyMap(requestedTickers)
+  const unresolvedTickers = new Set(requestedTickers)
+
+  for (const result of results) {
+    if (!isObjectRecord(result)) {
       continue
     }
 
-    requestedMap[symbol] = extractQuotePrice(result)
+    const price = extractQuotePrice(result as BrapiQuoteResult)
+    if (price === null) {
+      continue
+    }
+
+    const rawSymbol =
+      typeof result.symbol === 'string' ? normalizeTicker(result.symbol) : null
+
+    let matchedTicker: string | null = null
+
+    if (rawSymbol) {
+      if (rawSymbol in requestedMap) {
+        matchedTicker = rawSymbol
+      } else {
+        matchedTicker = requestedKeyMap.get(normalizeTickerKey(rawSymbol)) ?? null
+      }
+    }
+
+    if (!matchedTicker && unresolvedTickers.size === 1) {
+      matchedTicker = Array.from(unresolvedTickers)[0] ?? null
+    }
+
+    if (!matchedTicker) {
+      continue
+    }
+
+    requestedMap[matchedTicker] = price
+    unresolvedTickers.delete(matchedTicker)
   }
 
   return requestedMap
@@ -128,6 +215,21 @@ function createAbortSignal(timeoutMs: number): {
   return {
     signal: controller.signal,
     clear: () => globalThis.clearTimeout(timeoutId),
+  }
+}
+
+async function readErrorBody(response: Response): Promise<string> {
+  try {
+    const contentType = response.headers.get('content-type') ?? ''
+
+    if (contentType.includes('application/json')) {
+      const json = (await response.json()) as unknown
+      return extractResponseMessage(json) ?? JSON.stringify(json)
+    }
+
+    return (await response.text()).trim()
+  } catch {
+    return ''
   }
 }
 
@@ -147,7 +249,12 @@ async function fetchJsonWithTimeout(
     })
 
     if (!response.ok) {
-      throw new Error(`Price request failed with status ${response.status}`)
+      const details = await readErrorBody(response)
+      throw new Error(
+        `Price request failed with status ${response.status}${
+          details ? `: ${details}` : ''
+        }`
+      )
     }
 
     return await response.json()
