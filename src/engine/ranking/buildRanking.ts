@@ -36,7 +36,7 @@ const getSafePreferences = (preferences: Preferences): Preferences => ({
 })
 
 const buildPositionsMap = (
-  positions: PortfolioPosition[]
+  positions: readonly PortfolioPosition[]
 ): Map<string, PortfolioPosition> => {
   const positionsByTicker = new Map<string, PortfolioPosition>()
 
@@ -51,27 +51,37 @@ const buildPositionsMap = (
   return positionsByTicker
 }
 
+const resolveAssetMarketPrice = (asset: Asset): number => {
+  if (isPositiveNumber(asset.currentPrice)) {
+    return asset.currentPrice
+  }
+
+  if (isPositiveNumber(asset.price)) {
+    return asset.price
+  }
+
+  return 0
+}
+
 const calculatePositionMarketValue = (
   asset: Asset,
   position?: PortfolioPosition
 ): number => {
-  if (!position) {
+  if (!position || !isPositiveNumber(position.quantity)) {
     return 0
   }
 
-  if (!isPositiveNumber(position.quantity)) {
+  const marketPrice = resolveAssetMarketPrice(asset)
+
+  if (!isPositiveNumber(marketPrice)) {
     return 0
   }
 
-  if (!isPositiveNumber(asset.price)) {
-    return 0
-  }
-
-  return position.quantity * asset.price
+  return position.quantity * marketPrice
 }
 
 const calculateTotalPortfolioMarketValue = (
-  assets: Asset[],
+  assets: readonly Asset[],
   positionsByTicker: Map<string, PortfolioPosition>
 ): number => {
   let totalPortfolioMarketValue = 0
@@ -85,8 +95,8 @@ const calculateTotalPortfolioMarketValue = (
 }
 
 const buildPortfolioContext = (
-  assets: Asset[],
-  positions: PortfolioPosition[]
+  assets: readonly Asset[],
+  positions: readonly PortfolioPosition[]
 ): PortfolioContext => {
   const positionsByTicker = buildPositionsMap(positions)
 
@@ -215,7 +225,10 @@ const buildRankedAsset = (
   )
 
   const scoredAsset = enrichAssetWithScore(
-    asset,
+    {
+      ...asset,
+      price: resolveAssetMarketPrice(asset) || asset.price,
+    },
     preferences,
     snapshot.currentAllocationPct,
     snapshot.currentMarketValue,
@@ -224,6 +237,7 @@ const buildRankedAsset = (
 
   return {
     ...asset,
+    price: resolveAssetMarketPrice(asset) || asset.price,
     score: normalizeScoreExplainability(
       asset,
       scoredAsset.score,
@@ -251,8 +265,8 @@ const sortByFinalScoreDesc = (
 }
 
 export const buildRanking = (
-  assets: Asset[],
-  positions: PortfolioPosition[],
+  assets: readonly Asset[],
+  positions: readonly PortfolioPosition[],
   preferences: Preferences
 ): RankedAssetWithPercentile[] => {
   if (!Array.isArray(assets) || assets.length === 0) {

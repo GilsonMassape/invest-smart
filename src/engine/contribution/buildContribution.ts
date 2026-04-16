@@ -7,6 +7,7 @@ import type {
 const DEFAULT_SUGGESTED_AMOUNT = 100
 const MAX_SUGGESTIONS = 5
 const UNDERWEIGHT_THRESHOLD_PCT = 10
+const STRONG_BUY_SCORE_THRESHOLD = 65
 
 function toSafeNumber(value: unknown): number {
   const parsed = Number(value)
@@ -15,6 +16,21 @@ function toSafeNumber(value: unknown): number {
 
 function getAllocationGap(currentAllocationPct: number): number {
   return Math.max(UNDERWEIGHT_THRESHOLD_PCT - currentAllocationPct, 0)
+}
+
+function resolveAssetPrice(asset: RankedAsset): number {
+  const currentMarketValue = toSafeNumber(asset.currentMarketValue)
+  const ownedQuantity = toSafeNumber(asset.ownedQuantity)
+
+  if (currentMarketValue > 0 && ownedQuantity > 0) {
+    const derivedPrice = currentMarketValue / ownedQuantity
+
+    if (Number.isFinite(derivedPrice) && derivedPrice > 0) {
+      return derivedPrice
+    }
+  }
+
+  return toSafeNumber(asset.price)
 }
 
 function buildContributionRationale(
@@ -33,9 +49,15 @@ function buildContributionRationale(
     rationaleParts.push(asset.score.recommendation)
   }
 
-  if (Array.isArray(asset.score?.rationale) && asset.score.rationale.length > 0) {
+  if (
+    Array.isArray(asset.score?.rationale) &&
+    asset.score.rationale.length > 0
+  ) {
     rationaleParts.push(asset.score.rationale[0])
-  } else if (Array.isArray(asset.score?.reasons) && asset.score.reasons.length > 0) {
+  } else if (
+    Array.isArray(asset.score?.reasons) &&
+    asset.score.reasons.length > 0
+  ) {
     rationaleParts.push(asset.score.reasons[0])
   }
 
@@ -56,7 +78,7 @@ function buildContributionTags(
     tags.add('highConfidence')
   }
 
-  if (toSafeNumber(asset.score?.finalScore) >= 65) {
+  if (toSafeNumber(asset.score?.finalScore) >= STRONG_BUY_SCORE_THRESHOLD) {
     tags.add('strongBuy')
   }
 
@@ -85,7 +107,7 @@ function sortContributionCandidates(
 }
 
 export function buildContribution(
-  ranking: RankedAsset[]
+  ranking: readonly RankedAsset[]
 ): ContributionSuggestion[] {
   if (!Array.isArray(ranking) || ranking.length === 0) {
     return []
@@ -99,7 +121,7 @@ export function buildContribution(
     .sort(sortContributionCandidates)
     .slice(0, MAX_SUGGESTIONS)
     .map((asset): ContributionSuggestion => {
-      const price = toSafeNumber(asset.price)
+      const price = resolveAssetPrice(asset)
       const currentAllocationPct = toSafeNumber(asset.currentAllocationPct)
       const allocationGap = getAllocationGap(currentAllocationPct)
       const suggestedAmount = DEFAULT_SUGGESTED_AMOUNT
@@ -110,6 +132,7 @@ export function buildContribution(
         suggestedShares:
           price > 0 ? Math.floor(suggestedAmount / price) : undefined,
         rationale: buildContributionRationale(asset, allocationGap),
+        reason: buildContributionRationale(asset, allocationGap),
         tags: buildContributionTags(asset, allocationGap),
       }
     })

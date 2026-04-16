@@ -21,12 +21,6 @@ const FILTER_OPTIONS: FilterType[] = [
   'BDR',
 ]
 
-const formatNumber = (value: number) =>
-  value.toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-
 const ACTION_LABEL: Record<string, string> = {
   COMPRAR_FORTE: 'Compra forte',
   COMPRAR: 'Comprar',
@@ -43,8 +37,82 @@ const ACTION_STYLE: Record<string, string> = {
   EVITAR: 'bg-red-500/15 text-red-600 border-red-500/30',
 }
 
+function toSafeNumber(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function normalizeTicker(value: string): string {
+  return value.trim().toUpperCase()
+}
+
+function formatNumber(value: number): string {
+  return value.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+function formatMoney(value: number): string {
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  })
+}
+
+function formatPercent(value: number): string {
+  return `${formatNumber(value)}%`
+}
+
+function sanitizeRankingAsset(asset: RankedAsset): RankedAsset | null {
+  if (!asset?.ticker || asset.ticker.trim().length === 0) {
+    return null
+  }
+
+  return {
+    ...asset,
+    ticker: normalizeTicker(asset.ticker),
+    percentile: toSafeNumber(asset.percentile),
+    currentAllocationPct: toSafeNumber(asset.currentAllocationPct),
+    currentMarketValue: toSafeNumber(asset.currentMarketValue),
+    safeCurrentValue: toSafeNumber(asset.safeCurrentValue),
+    price: toSafeNumber(asset.price),
+    ownedQuantity: toSafeNumber(asset.ownedQuantity),
+    score: {
+      ...asset.score,
+      baseScore: toSafeNumber(asset.score?.baseScore),
+      preferenceBonus: toSafeNumber(asset.score?.preferenceBonus),
+      macroAdjustment: toSafeNumber(asset.score?.macroAdjustment),
+      concentrationPenalty: toSafeNumber(asset.score?.concentrationPenalty),
+      finalScore: toSafeNumber(asset.score?.finalScore),
+      weight: toSafeNumber(asset.score?.weight),
+      recommendation: asset.score?.recommendation ?? '',
+      confidence: asset.score?.confidence ?? 'BAIXA',
+      reasons: Array.isArray(asset.score?.reasons) ? asset.score.reasons : [],
+      breakdown: asset.score?.breakdown
+        ? {
+            macro: toSafeNumber(asset.score.breakdown.macro),
+            profile: toSafeNumber(asset.score.breakdown.profile),
+            concentration: toSafeNumber(asset.score.breakdown.concentration),
+          }
+        : undefined,
+      rationale: Array.isArray(asset.score?.rationale)
+        ? asset.score.rationale
+        : undefined,
+    },
+  }
+}
+
+function buildSafeRanking(ranking: RankedAsset[]): RankedAsset[] {
+  return ranking
+    .map(sanitizeRankingAsset)
+    .filter((asset): asset is RankedAsset => asset !== null)
+}
+
 function DecisionBadge({ action }: { action?: string }) {
-  if (!action) return <span className="text-slate-400">—</span>
+  if (!action) {
+    return <span className="text-slate-400">—</span>
+  }
 
   const label = ACTION_LABEL[action] ?? action
   const style =
@@ -68,6 +136,8 @@ function TableHeader() {
         <th className="px-4 py-3">Score</th>
         <th className="px-4 py-3">Percentil</th>
         <th className="px-4 py-3">Alocação</th>
+        <th className="px-4 py-3">Valor atual</th>
+        <th className="px-4 py-3">Preço</th>
         <th className="px-4 py-3">Decisão</th>
       </tr>
     </thead>
@@ -82,11 +152,14 @@ function RankingRow({
   decision?: Decision
 }) {
   return (
-    <tr className="border-t border-slate-200/60 hover:bg-slate-50/60 transition-colors">
+    <tr className="border-t border-slate-200/60 transition-colors hover:bg-slate-50/60">
       <td className="px-4 py-3">
         <div className="flex flex-col">
           <span className="font-semibold text-slate-950">
             {asset.ticker}
+          </span>
+          <span className="text-xs text-slate-500">
+            {asset.name}
           </span>
         </div>
       </td>
@@ -96,13 +169,19 @@ function RankingRow({
       </td>
 
       <td className="px-4 py-3 text-sm text-slate-600">
-        {asset.percentile
-          ? `${formatNumber(asset.percentile)}`
-          : '—'}
+        {formatNumber(asset.percentile)}
       </td>
 
       <td className="px-4 py-3 text-sm text-slate-600">
-        {formatNumber(asset.currentAllocationPct)}%
+        {formatPercent(asset.currentAllocationPct)}
+      </td>
+
+      <td className="px-4 py-3 text-sm text-slate-600">
+        {formatMoney(asset.currentMarketValue)}
+      </td>
+
+      <td className="px-4 py-3 text-sm text-slate-600">
+        {formatMoney(asset.price)}
       </td>
 
       <td className="px-4 py-3">
@@ -118,13 +197,25 @@ export const RankingSection = ({
   filterType,
   onFilterTypeChange,
 }: Props) => {
-  const safeRanking = Array.isArray(ranking) ? ranking : []
+  const safeRanking = useMemo(
+    () => buildSafeRanking(Array.isArray(ranking) ? ranking : []),
+    [ranking]
+  )
+
   const safeDecision = Array.isArray(decision) ? decision : []
 
   const decisionMap = useMemo(
-    () => new Map(safeDecision.map((d) => [d.ticker, d])),
+    () => new Map(safeDecision.map((item) => [normalizeTicker(item.ticker), item])),
     [safeDecision]
   )
+
+  const filteredRanking = useMemo(() => {
+    if (filterType === 'TODOS') {
+      return safeRanking
+    }
+
+    return safeRanking.filter((asset) => asset.type === filterType)
+  }, [safeRanking, filterType])
 
   return (
     <Card
@@ -132,7 +223,6 @@ export const RankingSection = ({
       subtitle="Ordenado por score, priorização e decisão sugerida"
     >
       <div className="space-y-4">
-        {/* FILTRO */}
         <div className="flex flex-col gap-1 max-w-[220px]">
           <span className="text-[10px] font-medium uppercase tracking-[0.32em] text-slate-400">
             Filtro
@@ -153,13 +243,12 @@ export const RankingSection = ({
           </select>
         </div>
 
-        {/* TABELA */}
         <div className="overflow-hidden rounded-2xl border border-slate-200/60">
           <table className="w-full border-collapse">
             <TableHeader />
 
             <tbody>
-              {safeRanking.map((asset) => (
+              {filteredRanking.map((asset) => (
                 <RankingRow
                   key={asset.ticker}
                   asset={asset}

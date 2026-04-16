@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest --environment jsdom",
+    "test:run": "vitest run --environment jsdom",
+    "test:watch": "vitest --environment jsdom --watch",
+    "test:ci": "vitest run --environment jsdom --reporter=dot"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",

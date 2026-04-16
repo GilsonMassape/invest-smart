@@ -1,10 +1,10 @@
-import { Card } from '../common/Card';
-import type { RebalanceSuggestion } from '../../domain/types';
-import { toMoney, toPercent } from '../../utils/number';
+import { Card } from '../common/Card'
+import type { RebalanceSuggestion } from '../../domain/types'
+import { toMoney, toPercent } from '../../utils/number'
 
 type Props = {
-  rebalance: RebalanceSuggestion[];
-};
+  rebalance: RebalanceSuggestion[]
+}
 
 const getActionMeta = (
   action: RebalanceSuggestion['action']
@@ -14,50 +14,85 @@ const getActionMeta = (
       return {
         label: 'Comprar',
         color: '#166534',
-        background: '#f0fdf4'
-      };
+        background: '#f0fdf4',
+      }
     case 'REDUZIR':
       return {
         label: 'Reduzir',
         color: '#b45309',
-        background: '#fffbeb'
-      };
+        background: '#fffbeb',
+      }
     default:
       return {
         label: 'Manter',
         color: '#475569',
-        background: '#f8fafc'
-      };
+        background: '#f8fafc',
+      }
   }
-};
+}
+
+function toSafeNumber(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function sanitizeRebalanceItem(
+  item: RebalanceSuggestion
+): RebalanceSuggestion | null {
+  if (!item?.ticker || item.ticker.trim().length === 0) {
+    return null
+  }
+
+  return {
+    ...item,
+    ticker: item.ticker.trim().toUpperCase(),
+    currentValue: toSafeNumber(item.currentValue),
+    currentPct: toSafeNumber(item.currentPct),
+    targetValue:
+      typeof item.targetValue === 'number' && Number.isFinite(item.targetValue)
+        ? item.targetValue
+        : undefined,
+    targetPct: toSafeNumber(item.targetPct),
+    diffValue: toSafeNumber(item.diffValue),
+    deltaValue:
+      typeof item.deltaValue === 'number' && Number.isFinite(item.deltaValue)
+        ? item.deltaValue
+        : undefined,
+  }
+}
 
 const getDiffTone = (value: number) => {
   if (value > 0) {
-    return '#166534';
+    return '#166534'
   }
 
   if (value < 0) {
-    return '#b45309';
+    return '#b45309'
   }
 
-  return '#64748b';
-};
+  return '#64748b'
+}
 
 export const RebalanceSection = ({ rebalance }: Props) => {
-  const safeRebalance = Array.isArray(rebalance) ? rebalance : [];
-  const hasData = safeRebalance.length > 0;
+  const safeRebalance = Array.isArray(rebalance)
+    ? rebalance
+        .map(sanitizeRebalanceItem)
+        .filter((item): item is RebalanceSuggestion => item !== null)
+    : []
+
+  const hasData = safeRebalance.length > 0
 
   const actionableCount = safeRebalance.filter(
     (item) => item.action !== 'MANTER'
-  ).length;
+  ).length
 
   const buyTotal = safeRebalance
     .filter((item) => item.action === 'COMPRAR' && item.diffValue > 0)
-    .reduce((sum, item) => sum + item.diffValue, 0);
+    .reduce((sum, item) => sum + item.diffValue, 0)
 
   const reduceTotal = safeRebalance
     .filter((item) => item.action === 'REDUZIR' && item.diffValue < 0)
-    .reduce((sum, item) => sum + Math.abs(item.diffValue), 0);
+    .reduce((sum, item) => sum + Math.abs(item.diffValue), 0)
 
   return (
     <Card
@@ -73,7 +108,7 @@ export const RebalanceSection = ({ rebalance }: Props) => {
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
               gap: 12,
-              marginBottom: 16
+              marginBottom: 16,
             }}
           >
             <div
@@ -81,7 +116,7 @@ export const RebalanceSection = ({ rebalance }: Props) => {
                 border: '1px solid #e5e7eb',
                 borderRadius: 12,
                 padding: 12,
-                background: '#fff'
+                background: '#fff',
               }}
             >
               <div className="muted" style={{ marginBottom: 4 }}>
@@ -95,7 +130,7 @@ export const RebalanceSection = ({ rebalance }: Props) => {
                 border: '1px solid #e5e7eb',
                 borderRadius: 12,
                 padding: 12,
-                background: '#fff'
+                background: '#fff',
               }}
             >
               <div className="muted" style={{ marginBottom: 4 }}>
@@ -109,7 +144,7 @@ export const RebalanceSection = ({ rebalance }: Props) => {
                 border: '1px solid #e5e7eb',
                 borderRadius: 12,
                 padding: 12,
-                background: '#fff'
+                background: '#fff',
               }}
             >
               <div className="muted" style={{ marginBottom: 4 }}>
@@ -133,8 +168,8 @@ export const RebalanceSection = ({ rebalance }: Props) => {
               </thead>
               <tbody>
                 {safeRebalance.map((item) => {
-                  const actionMeta = getActionMeta(item.action);
-                  const pctGap = item.targetPct - item.currentPct;
+                  const actionMeta = getActionMeta(item.action)
+                  const pctGap = item.targetPct - item.currentPct
 
                   return (
                     <tr key={item.ticker}>
@@ -153,13 +188,13 @@ export const RebalanceSection = ({ rebalance }: Props) => {
                           style={{
                             display: 'flex',
                             flexDirection: 'column',
-                            gap: 4
+                            gap: 4,
                           }}
                         >
                           <span
                             style={{
                               color: getDiffTone(item.diffValue),
-                              fontWeight: 600
+                              fontWeight: 600,
                             }}
                           >
                             {item.diffValue > 0 ? '+' : ''}
@@ -183,14 +218,14 @@ export const RebalanceSection = ({ rebalance }: Props) => {
                             background: actionMeta.background,
                             color: actionMeta.color,
                             fontSize: 12,
-                            fontWeight: 700
+                            fontWeight: 700,
                           }}
                         >
                           {actionMeta.label}
                         </span>
                       </td>
                     </tr>
-                  );
+                  )
                 })}
               </tbody>
             </table>
@@ -198,5 +233,5 @@ export const RebalanceSection = ({ rebalance }: Props) => {
         </>
       )}
     </Card>
-  );
-};
+  )
+}

@@ -1,9 +1,22 @@
-import { Session, AuthChangeEvent } from '@supabase/supabase-js'
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
 import { supabase } from '../infra/supabase/supabaseClient'
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase()
+}
+
+function normalizePassword(password: string): string {
+  return password.trim()
+}
 
 export const authService = {
   async getSession(): Promise<Session | null> {
-    const { data } = await supabase.auth.getSession()
+    const { data, error } = await supabase.auth.getSession()
+
+    if (error) {
+      throw error
+    }
+
     return data.session
   },
 
@@ -15,15 +28,15 @@ export const authService = {
 
   async signIn(email: string, password: string) {
     return supabase.auth.signInWithPassword({
-      email,
-      password
+      email: normalizeEmail(email),
+      password: normalizePassword(password),
     })
   },
 
   async signUp(email: string, password: string) {
     return supabase.auth.signUp({
-      email,
-      password
+      email: normalizeEmail(email),
+      password: normalizePassword(password),
     })
   },
 
@@ -33,7 +46,7 @@ export const authService = {
 
   async updatePassword(password: string) {
     return supabase.auth.updateUser({
-      password
+      password: normalizePassword(password),
     })
-  }
+  },
 }

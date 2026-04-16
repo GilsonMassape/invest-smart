@@ -18,6 +18,7 @@ export type DashboardConcentrationPoint = ConcentrationDataItem
 export type DashboardMetricPoint = Readonly<{
   name: string
   value: number
+  benchmarkValue?: number
 }>
 
 export type DashboardSourcePosition = Readonly<{
@@ -59,6 +60,16 @@ export type DashboardViewModelOutput = Readonly<{
   statItems: StatItem[]
 }>
 
+type SafePatrimonySnapshot = Readonly<{
+  timestamp: number
+  total: number
+}>
+
+type GroupedHistoryPoint = SafePatrimonySnapshot &
+  Readonly<{
+    dayTimestamp: number
+  }>
+
 const VALID_DASHBOARD_TYPES: readonly DashboardAssetType[] = [
   'AÇÃO',
   'FII',
@@ -76,6 +87,10 @@ const PERFORMANCE_LABELS = {
   volatilityPct: 'Volatilidade',
 } as const
 
+const EVOLUTION_MAX_POINTS = 12
+const BENCHMARK_DAILY_RETURN_PCT = 0.04
+const DAY_IN_MS = 86400000
+
 function toSafeNumber(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
@@ -83,6 +98,51 @@ function toSafeNumber(value: unknown): number {
 
 function normalizeTicker(value: string): string {
   return value.trim().toUpperCase()
+}
+
+function formatEvolutionLabel(date: Date): string {
+  return date.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+  })
+}
+
+function isValidPatrimonySnapshot(
+  value: unknown
+): value is SafePatrimonySnapshot {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<SafePatrimonySnapshot>
+
+  return (
+    typeof candidate.timestamp === 'number' &&
+    Number.isFinite(candidate.timestamp) &&
+    typeof candidate.total === 'number' &&
+    Number.isFinite(candidate.total)
+  )
+}
+
+function getDayTimestamp(timestamp: number): number {
+  const date = new Date(timestamp)
+
+  return new Date(
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate()
+  ).getTime()
+}
+
+function calculateElapsedDays(fromTimestamp: number, toTimestamp: number): number {
+  if (!Number.isFinite(fromTimestamp) || !Number.isFinite(toTimestamp)) {
+    return 0
+  }
+
+  return Math.max(
+    0,
+    Math.round((getDayTimestamp(toTimestamp) - getDayTimestamp(fromTimestamp)) / DAY_IN_MS)
+  )
 }
 
 function resolveDashboardAssetType(
@@ -133,37 +193,129 @@ function toAggregationPortfolioPositions(
   )
 }
 
-function toDayKey(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString('pt-BR')
+function groupHistoryByDay(history: PatrimonyHistory): GroupedHistoryPoint[] {
+  const safeHistory = Array.isArray(history) ? history : []
+  const groupedByDay = new Map<number, SafePatrimonySnapshot>()
+
+  for (const item of safeHistory) {
+    if (!isValidPatrimonySnapshot(item)) {
+      continue
+    }
+
+    const dayTimestamp = getDayTimestamp(item.timestamp)
+
+    groupedByDay.set(dayTimestamp, {
+      timestamp: item.timestamp,
+      total: toSafeNumber(item.total),
+    })
+  }
+
+  return Array.from(groupedByDay.entries())
+    .sort((left, right) => left[0] - right[0])
+    .map(([dayTimestamp, snapshot]) => ({
+      ...snapshot,
+      dayTimestamp,
+    }))
+}
+
+function compressEvolutionPoints(
+  points: readonly DashboardMetricPoint[],
+  maxPoints: number
+): DashboardMetricPoint[] {
+  if (points.length <= maxPoints) {
+    return [...points]
+  }
+
+  const selectedIndexes = new Set<number>([0, points.length - 1])
+  const intervals = maxPoints - 1
+
+  for (let step = 1; step < intervals; step += 1) {
+    const index = Math.round((step * (points.length - 1)) / intervals)
+    selectedIndexes.add(index)
+  }
+
+  return Array.from(selectedIndexes)
+    .sort((left, right) => left - right)
+    .map((index) => points[index])
+}
+
+function calculateBenchmarkValue(
+  baseValue: number,
+  elapsedDays: number
+): number | undefined {
+  if (baseValue <= 0 || elapsedDays < 0) {
+    return undefined
+  }
+
+  const dailyRate = BENCHMARK_DAILY_RETURN_PCT / 100
+
+  return baseValue * Math.pow(1 + dailyRate, elapsedDays)
+}
+
+function buildCurrentEvolutionPoint(params: {
+  currentTotalPatrimony: number
+  benchmarkBaseValue: number
+  firstHistoryTimestamp: number
+}): DashboardMetricPoint {
+  const { currentTotalPatrimony, benchmarkBaseValue, firstHistoryTimestamp } = params
+  const now = Date.now()
+
+  return {
+    name: 'Atual',
+    value: toSafeNumber(currentTotalPatrimony),
+    benchmarkValue: calculateBenchmarkValue(
+      benchmarkBaseValue,
+      calculateElapsedDays(firstHistoryTimestamp, now)
+    ),
+  }
 }
 
 function buildEvolutionData(
   history: PatrimonyHistory,
   currentTotalPatrimony: number
 ): DashboardMetricPoint[] {
-  const safeHistory = Array.isArray(history) ? history : []
-  const groupedByDay = new Map<string, number>()
+  const groupedHistory = groupHistoryByDay(history)
+  const safeCurrentTotalPatrimony = toSafeNumber(currentTotalPatrimony)
 
-  for (const item of safeHistory) {
-    if (
-      !item ||
-      !Number.isFinite(item.timestamp) ||
-      !Number.isFinite(item.total)
-    ) {
-      continue
-    }
-
-    groupedByDay.set(toDayKey(item.timestamp), toSafeNumber(item.total))
+  if (groupedHistory.length === 0) {
+    return [
+      {
+        name: 'Atual',
+        value: safeCurrentTotalPatrimony,
+        benchmarkValue:
+          safeCurrentTotalPatrimony > 0 ? safeCurrentTotalPatrimony : undefined,
+      },
+    ]
   }
 
-  if (groupedByDay.size === 0) {
-    return [{ name: 'Atual', value: toSafeNumber(currentTotalPatrimony) }]
-  }
+  const firstHistoryPoint = groupedHistory[0]
+  const benchmarkBaseValue = toSafeNumber(firstHistoryPoint.total)
 
-  return Array.from(groupedByDay.entries()).map(([name, value]) => ({
-    name,
-    value: toSafeNumber(value),
+  const historicalPoints: DashboardMetricPoint[] = groupedHistory.map((item) => ({
+    name: formatEvolutionLabel(new Date(item.dayTimestamp)),
+    value: toSafeNumber(item.total),
+    benchmarkValue: calculateBenchmarkValue(
+      benchmarkBaseValue,
+      calculateElapsedDays(firstHistoryPoint.dayTimestamp, item.dayTimestamp)
+    ),
   }))
+
+  const lastHistoricalPoint = historicalPoints[historicalPoints.length - 1]
+  const shouldAppendCurrentPoint =
+    lastHistoricalPoint.value !== safeCurrentTotalPatrimony
+
+  const points = shouldAppendCurrentPoint
+    ? [
+        ...historicalPoints,
+        buildCurrentEvolutionPoint({
+          currentTotalPatrimony: safeCurrentTotalPatrimony,
+          benchmarkBaseValue,
+          firstHistoryTimestamp: firstHistoryPoint.dayTimestamp,
+        }),
+      ]
+    : historicalPoints
+
+  return compressEvolutionPoints(points, EVOLUTION_MAX_POINTS)
 }
 
 function buildDashboardInsights(decision: readonly Decision[]): string[] {
@@ -293,16 +445,24 @@ export function buildDashboardViewModel(
 
   const performanceData: DashboardMetricPoint[] = [
     { name: PERFORMANCE_LABELS.invested, value: toSafeNumber(metrics.invested) },
-    { name: PERFORMANCE_LABELS.patrimony, value: toSafeNumber(metrics.patrimony) },
+    {
+      name: PERFORMANCE_LABELS.patrimony,
+      value: toSafeNumber(metrics.patrimony),
+    },
     { name: PERFORMANCE_LABELS.profit, value: toSafeNumber(metrics.profit) },
-    { name: PERFORMANCE_LABELS.profitPct, value: toSafeNumber(metrics.profitPct) },
+    {
+      name: PERFORMANCE_LABELS.profitPct,
+      value: toSafeNumber(metrics.profitPct),
+    },
     {
       name: PERFORMANCE_LABELS.monthlyReturnPct,
       value: toSafeNumber(metrics.monthlyReturnPct),
+      benchmarkValue: toSafeNumber(metrics.benchmarkMonthlyReturnPct),
     },
     {
       name: PERFORMANCE_LABELS.annualReturnPct,
       value: toSafeNumber(metrics.annualReturnPct),
+      benchmarkValue: toSafeNumber(metrics.benchmarkAnnualReturnPct),
     },
     {
       name: PERFORMANCE_LABELS.volatilityPct,

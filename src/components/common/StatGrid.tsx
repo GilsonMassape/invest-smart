@@ -28,11 +28,13 @@ function normalizeLabel(label: string): string {
 }
 
 function normalizeItems(items: StatItem[]): StatItem[] {
-  return items.map((item) => ({
-    label: normalizeLabel(item.label),
-    value: toSafeNumber(item.value),
-    type: item.type,
-  }))
+  return items
+    .map((item) => ({
+      label: normalizeLabel(item.label),
+      value: toSafeNumber(item.value),
+      type: item.type,
+    }))
+    .filter((item) => item.label.length > 0)
 }
 
 function formatPercentage(value: number): string {
@@ -86,6 +88,14 @@ function getGridColumnsClass(itemCount: number): string {
   return 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7'
 }
 
+function EmptyState() {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
+      Nenhum indicador disponível.
+    </div>
+  )
+}
+
 function StatCard({ item }: { item: StatItem }) {
   const formattedValue = formatValue(item.value, item.type)
   const valueToneClass = getValueToneClass(item.label, item.value)
@@ -117,6 +127,10 @@ function StatCard({ item }: { item: StatItem }) {
 
 export const StatGrid = ({ items }: Props) => {
   const normalizedItems = normalizeItems(items)
+
+  if (normalizedItems.length === 0) {
+    return <EmptyState />
+  }
 
   return (
     <div className={`grid gap-4 ${getGridColumnsClass(normalizedItems.length)}`}>

@@ -1,5 +1,10 @@
 import type { PatrimonyHistory } from '../../domain/history'
 
+type SafePatrimonySnapshot = Readonly<{
+  timestamp: number
+  total: number
+}>
+
 export type PerformanceMetrics = Readonly<{
   invested: number
   patrimony: number
@@ -8,6 +13,10 @@ export type PerformanceMetrics = Readonly<{
   monthlyReturnPct: number
   annualReturnPct: number
   volatilityPct: number
+  benchmarkMonthlyReturnPct: number
+  benchmarkAnnualReturnPct: number
+  alphaMonthlyPct: number
+  alphaAnnualPct: number
 }>
 
 export type BuildPerformanceMetricsParams = Readonly<{
@@ -15,6 +24,10 @@ export type BuildPerformanceMetricsParams = Readonly<{
   totalPatrimony: number
   patrimonyHistory: PatrimonyHistory
 }>
+
+const APPROX_TRADING_DAYS_PER_MONTH = 21
+const APPROX_TRADING_DAYS_PER_YEAR = 252
+const BENCHMARK_DAILY_RETURN_PCT = 0.04
 
 function toSafeNumber(value: unknown): number {
   const parsed = Number(value)
@@ -25,31 +38,45 @@ function safeDivide(numerator: number, denominator: number): number {
   return denominator !== 0 ? numerator / denominator : 0
 }
 
+function isValidSnapshot(value: unknown): value is SafePatrimonySnapshot {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<SafePatrimonySnapshot>
+
+  return (
+    typeof candidate.timestamp === 'number' &&
+    Number.isFinite(candidate.timestamp) &&
+    typeof candidate.total === 'number' &&
+    Number.isFinite(candidate.total)
+  )
+}
+
 function calculateProfit(totalInvested: number, totalPatrimony: number): number {
   return totalPatrimony - totalInvested
 }
 
-function calculateProfitPct(
-  totalInvested: number,
-  profit: number
-): number {
+function calculateProfitPct(totalInvested: number, profit: number): number {
   return safeDivide(profit * 100, totalInvested)
 }
 
-function buildOrderedHistory(history: PatrimonyHistory): number[] {
+function normalizeHistory(history: PatrimonyHistory): SafePatrimonySnapshot[] {
   if (!Array.isArray(history) || history.length === 0) {
     return []
   }
 
   return history
-    .filter(
-      (item) =>
-        item &&
-        Number.isFinite(item.timestamp) &&
-        Number.isFinite(item.total)
-    )
+    .filter(isValidSnapshot)
+    .map((item) => ({
+      timestamp: toSafeNumber(item.timestamp),
+      total: toSafeNumber(item.total),
+    }))
     .sort((left, right) => left.timestamp - right.timestamp)
-    .map((item) => toSafeNumber(item.total))
+}
+
+function buildOrderedHistoryValues(history: PatrimonyHistory): number[] {
+  return normalizeHistory(history).map((item) => item.total)
 }
 
 function buildReturnsSeries(values: number[]): number[] {
@@ -96,16 +123,17 @@ function calculateStandardDeviation(values: number[]): number {
   return Math.sqrt(variance)
 }
 
-function calculateMonthlyReturnPct(
+function calculateWindowReturnPct(
   historyValues: number[],
-  fallbackProfitPct: number
+  approxPeriods: number,
+  fallbackValue: number
 ): number {
   if (historyValues.length < 2) {
-    return fallbackProfitPct / 12
+    return fallbackValue
   }
 
   const lastValue = historyValues[historyValues.length - 1]
-  const comparisonIndex = Math.max(0, historyValues.length - 22)
+  const comparisonIndex = Math.max(0, historyValues.length - 1 - approxPeriods)
   const baseValue = historyValues[comparisonIndex]
 
   if (baseValue <= 0) {
@@ -115,12 +143,12 @@ function calculateMonthlyReturnPct(
   return ((lastValue - baseValue) / baseValue) * 100
 }
 
-function calculateAnnualReturnPct(
+function calculateSinceStartReturnPct(
   historyValues: number[],
-  fallbackProfitPct: number
+  fallbackValue: number
 ): number {
   if (historyValues.length < 2) {
-    return fallbackProfitPct
+    return fallbackValue
   }
 
   const firstValue = historyValues[0]
@@ -138,6 +166,43 @@ function calculateVolatilityPct(historyValues: number[]): number {
   return calculateStandardDeviation(returnsSeries)
 }
 
+function calculateCompoundedBenchmarkReturnPct(periods: number): number {
+  if (periods <= 0) {
+    return 0
+  }
+
+  const dailyRate = BENCHMARK_DAILY_RETURN_PCT / 100
+  return (Math.pow(1 + dailyRate, periods) - 1) * 100
+}
+
+function calculateBenchmarkMonthlyReturnPct(historyValues: number[]): number {
+  if (historyValues.length < 2) {
+    return calculateCompoundedBenchmarkReturnPct(APPROX_TRADING_DAYS_PER_MONTH)
+  }
+
+  const periods = Math.min(
+    APPROX_TRADING_DAYS_PER_MONTH,
+    Math.max(1, historyValues.length - 1)
+  )
+
+  return calculateCompoundedBenchmarkReturnPct(periods)
+}
+
+function calculateBenchmarkAnnualReturnPct(historyValues: number[]): number {
+  if (historyValues.length < 2) {
+    return calculateCompoundedBenchmarkReturnPct(
+      APPROX_TRADING_DAYS_PER_YEAR
+    )
+  }
+
+  const periods = Math.min(
+    APPROX_TRADING_DAYS_PER_YEAR,
+    Math.max(1, historyValues.length - 1)
+  )
+
+  return calculateCompoundedBenchmarkReturnPct(periods)
+}
+
 export function buildPerformanceMetrics(
   params: BuildPerformanceMetricsParams
 ): PerformanceMetrics {
@@ -147,19 +212,26 @@ export function buildPerformanceMetrics(
   const profit = calculateProfit(totalInvested, totalPatrimony)
   const profitPct = calculateProfitPct(totalInvested, profit)
 
-  const historyValues = buildOrderedHistory(params.patrimonyHistory)
+  const historyValues = buildOrderedHistoryValues(params.patrimonyHistory)
 
-  const monthlyReturnPct = calculateMonthlyReturnPct(
+  const monthlyReturnPct = calculateWindowReturnPct(
     historyValues,
-    profitPct
+    APPROX_TRADING_DAYS_PER_MONTH,
+    profitPct / 12
   )
 
-  const annualReturnPct = calculateAnnualReturnPct(
-    historyValues,
-    profitPct
-  )
+  const annualReturnPct = calculateSinceStartReturnPct(historyValues, profitPct)
 
   const volatilityPct = calculateVolatilityPct(historyValues)
+
+  const benchmarkMonthlyReturnPct =
+    calculateBenchmarkMonthlyReturnPct(historyValues)
+
+  const benchmarkAnnualReturnPct =
+    calculateBenchmarkAnnualReturnPct(historyValues)
+
+  const alphaMonthlyPct = monthlyReturnPct - benchmarkMonthlyReturnPct
+  const alphaAnnualPct = annualReturnPct - benchmarkAnnualReturnPct
 
   return {
     invested: totalInvested,
@@ -169,5 +241,9 @@ export function buildPerformanceMetrics(
     monthlyReturnPct,
     annualReturnPct,
     volatilityPct,
+    benchmarkMonthlyReturnPct,
+    benchmarkAnnualReturnPct,
+    alphaMonthlyPct,
+    alphaAnnualPct,
   }
 }

@@ -1,10 +1,10 @@
-import { Card } from '../common/Card';
-import type { ContributionSuggestion, TagKey } from '../../domain/types';
+import { Card } from '../common/Card'
+import type { ContributionSuggestion, TagKey } from '../../domain/types'
 
 interface Props {
-  monthlyContribution: number;
-  contribution: ContributionSuggestion[];
-  onContributionChange: (value: number) => void;
+  monthlyContribution: number
+  contribution: ContributionSuggestion[]
+  onContributionChange: (value: number) => void
 }
 
 const TAG_UI: Record<TagKey, { label: string; color: string }> = {
@@ -20,20 +20,65 @@ const TAG_UI: Record<TagKey, { label: string; color: string }> = {
   balanced: { label: 'Balanceado', color: '#6b7280' },
   rebalance: { label: 'Rebalancear', color: '#7c3aed' },
   opportunity: { label: 'Oportunidade', color: '#dc2626' },
-};
+}
 
-const formatCurrency = (value: number) =>
-  value.toLocaleString('pt-BR', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function toSafeNumber(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function formatCurrency(value: number): string {
+  return value.toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  })
+}
+
+function sanitizeContributionItem(
+  item: ContributionSuggestion
+): ContributionSuggestion | null {
+  if (!item?.ticker || item.ticker.trim().length === 0) {
+    return null
+  }
+
+  return {
+    ...item,
+    ticker: item.ticker.trim().toUpperCase(),
+    suggestedAmount: toSafeNumber(item.suggestedAmount),
+    suggestedShares:
+      typeof item.suggestedShares === 'number' &&
+      Number.isFinite(item.suggestedShares) &&
+      item.suggestedShares >= 0
+        ? item.suggestedShares
+        : undefined,
+    rationale:
+      typeof item.rationale === 'string' && item.rationale.trim().length > 0
+        ? item.rationale
+        : typeof item.reason === 'string'
+          ? item.reason
+          : '',
+    reason:
+      typeof item.reason === 'string' && item.reason.trim().length > 0
+        ? item.reason
+        : typeof item.rationale === 'string'
+          ? item.rationale
+          : '',
+    tags: Array.isArray(item.tags)
+      ? item.tags.filter((tag): tag is TagKey => tag in TAG_UI)
+      : [],
+  }
+}
 
 export const ContributionSection = ({
   monthlyContribution,
   contribution,
   onContributionChange,
 }: Props) => {
-  const safeContribution = Array.isArray(contribution) ? contribution : [];
+  const safeContribution = Array.isArray(contribution)
+    ? contribution
+        .map(sanitizeContributionItem)
+        .filter((item): item is ContributionSuggestion => item !== null)
+    : []
 
   return (
     <Card
@@ -59,7 +104,7 @@ export const ContributionSection = ({
             min={0}
             step={100}
             value={monthlyContribution}
-            onChange={(e) => onContributionChange(Number(e.target.value) || 0)}
+            onChange={(e) => onContributionChange(toSafeNumber(e.target.value))}
           />
         </label>
 
@@ -85,11 +130,11 @@ export const ContributionSection = ({
                       <strong>{item.ticker}</strong>
                     </td>
 
-                    <td>R$ {formatCurrency(item.suggestedAmount)}</td>
+                    <td>{formatCurrency(item.suggestedAmount)}</td>
 
                     <td>{item.suggestedShares ?? '—'}</td>
 
-                    <td>{item.rationale}</td>
+                    <td>{item.rationale || item.reason || '—'}</td>
 
                     <td>
                       <div
@@ -121,5 +166,5 @@ export const ContributionSection = ({
         )}
       </div>
     </Card>
-  );
-};
+  )
+}

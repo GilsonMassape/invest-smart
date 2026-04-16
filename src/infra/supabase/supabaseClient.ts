@@ -1,11 +1,17 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+function readRequiredEnv(name: 'VITE_SUPABASE_URL' | 'VITE_SUPABASE_ANON_KEY'): string {
+  const value = import.meta.env[name]
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Supabase env variables are missing')
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`Missing required env: ${name}`)
+  }
+
+  return value.trim()
 }
+
+const supabaseUrl = readRequiredEnv('VITE_SUPABASE_URL')
+const supabaseAnonKey = readRequiredEnv('VITE_SUPABASE_ANON_KEY')
 
 export const supabase: SupabaseClient = createClient(
   supabaseUrl,
@@ -15,7 +21,7 @@ export const supabase: SupabaseClient = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: 'invest-smart.supabase.auth'
-    }
+      storageKey: 'invest-smart.supabase.auth',
+    },
   }
 )

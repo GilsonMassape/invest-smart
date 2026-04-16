@@ -22,7 +22,45 @@ function normalizeTicker(value: string): string {
   return value.trim().toUpperCase()
 }
 
-export function buildPortfolioAssetMap(assets: Asset[]): PortfolioAssetMap {
+function resolveAssetPrice(asset?: Asset): number | null {
+  if (!asset) {
+    return null
+  }
+
+  if (
+    typeof asset.currentPrice === 'number' &&
+    Number.isFinite(asset.currentPrice) &&
+    asset.currentPrice > 0
+  ) {
+    return asset.currentPrice
+  }
+
+  if (
+    typeof asset.price === 'number' &&
+    Number.isFinite(asset.price) &&
+    asset.price > 0
+  ) {
+    return asset.price
+  }
+
+  return null
+}
+
+function resolvePositionCurrentPrice(position: PortfolioPosition): number | null {
+  if (
+    typeof position.currentPrice === 'number' &&
+    Number.isFinite(position.currentPrice) &&
+    position.currentPrice > 0
+  ) {
+    return position.currentPrice
+  }
+
+  return null
+}
+
+export function buildPortfolioAssetMap(
+  assets: readonly Asset[]
+): PortfolioAssetMap {
   return new Map(assets.map((asset) => [normalizeTicker(asset.ticker), asset]))
 }
 
@@ -37,11 +75,15 @@ function resolveMarketPrice(
   position: PortfolioPosition,
   asset?: Asset
 ): number {
-  return asset?.price ?? position.currentPrice ?? position.avgPrice
+  return (
+    resolveAssetPrice(asset) ??
+    resolvePositionCurrentPrice(position) ??
+    toSafeNumber(position.avgPrice)
+  )
 }
 
 export function buildPortfolio(
-  positions: PortfolioPosition[],
+  positions: readonly PortfolioPosition[],
   assetMap: PortfolioAssetMap
 ): PortfolioItem[] {
   if (!Array.isArray(positions) || positions.length === 0) {
@@ -59,7 +101,9 @@ export function buildPortfolio(
 
     return {
       ...position,
-      name: asset?.name ?? position.ticker,
+      ticker: normalizeTicker(position.ticker),
+      currentPrice: resolvePositionCurrentPrice(position),
+      name: asset?.name ?? normalizeTicker(position.ticker),
       type: asset?.type ?? 'AÇÃO',
       sector: asset?.sector ?? 'N/A',
       price: marketPrice,
@@ -83,7 +127,7 @@ export function buildPortfolio(
 }
 
 export function calculateTotalInvested(
-  positions: PortfolioPosition[]
+  positions: readonly PortfolioPosition[]
 ): number {
   if (!Array.isArray(positions) || positions.length === 0) {
     return 0

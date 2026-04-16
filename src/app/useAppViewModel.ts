@@ -6,6 +6,7 @@ import {
   type B3ImportMode,
   type B3ParsedPosition,
 } from '../domain/import/b3Import'
+import type { PatrimonyHistory, PatrimonySnapshot } from '../domain/history'
 import type {
   Asset,
   ContributionSuggestion,
@@ -31,23 +32,18 @@ import {
 import { buildDecision } from '../engine/decision/buildDecision'
 import { usePersistentAppState } from '../hooks/usePersistentAppState'
 import { usePortfolioData } from '../hooks/usePortfolioData'
-import { fetchPrices } from '../services/priceService'
+import {
+  appendSnapshot,
+  loadPatrimonyHistory,
+  savePatrimonyHistory,
+} from '../services/patrimonyHistory'
 
 type PersistentAppState = ReturnType<typeof usePersistentAppState>
 type PersistentState = PersistentAppState['state']
 type PersistentActions = PersistentAppState['actions']
 type PortfolioData = ReturnType<typeof usePortfolioData>
 type PortfolioItem = PortfolioData['portfolio'][number]
-
-type PatrimonySnapshot = Readonly<{
-  timestamp: number
-  total: number
-}>
-
-type PatrimonyHistory = PatrimonySnapshot[]
-
-const PATRIMONY_HISTORY_STORAGE_KEY = 'invest-smart-patrimony-history-v1'
-const PATRIMONY_SNAPSHOT_MIN_INTERVAL_MS = 60 * 60 * 1000
+type PriceStatus = PortfolioData['priceStatus']
 
 export interface HeaderViewModel {
   riskProfile: RiskProfile
@@ -68,6 +64,10 @@ export interface DashboardViewModel {
   evolutionData: DashboardMetricPoint[]
   insights: string[]
   statItems: StatItem[]
+  priceStatus: PriceStatus
+  priceError: string | null
+  lastPriceUpdateAt: number | null
+  onRefreshPrices: () => Promise<void>
 }
 
 export interface ContributionViewModel {
@@ -110,104 +110,25 @@ function toSafeNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-function isBrowser(): boolean {
-  return typeof window !== 'undefined'
-}
-
-function isPatrimonySnapshot(value: unknown): value is PatrimonySnapshot {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const candidate = value as Partial<PatrimonySnapshot>
-
-  return (
-    typeof candidate.timestamp === 'number' &&
-    Number.isFinite(candidate.timestamp) &&
-    typeof candidate.total === 'number' &&
-    Number.isFinite(candidate.total)
-  )
-}
-
-function loadPatrimonyHistory(): PatrimonyHistory {
-  if (!isBrowser()) {
-    return []
-  }
-
-  try {
-    const raw = window.localStorage.getItem(PATRIMONY_HISTORY_STORAGE_KEY)
-    if (!raw) {
-      return []
-    }
-
-    const parsed = JSON.parse(raw)
-
-    if (!Array.isArray(parsed)) {
-      return []
-    }
-
-    return parsed.filter(isPatrimonySnapshot)
-  } catch {
-    return []
-  }
-}
-
-function savePatrimonyHistory(history: PatrimonyHistory): void {
-  if (!isBrowser()) {
-    return
-  }
-
-  try {
-    window.localStorage.setItem(
-      PATRIMONY_HISTORY_STORAGE_KEY,
-      JSON.stringify(history)
-    )
-  } catch {
-    // noop
-  }
-}
-
-function appendSnapshot(
-  history: PatrimonyHistory,
-  snapshot: PatrimonySnapshot
-): PatrimonyHistory {
-  const safeHistory = Array.isArray(history) ? history.filter(isPatrimonySnapshot) : []
-
-  const lastSnapshot = safeHistory[safeHistory.length - 1]
-
-  if (!lastSnapshot) {
-    return [snapshot]
-  }
-
-  const isSameValue = lastSnapshot.total === snapshot.total
-  const isTooSoon =
-    snapshot.timestamp - lastSnapshot.timestamp < PATRIMONY_SNAPSHOT_MIN_INTERVAL_MS
-
-  if (isSameValue && isTooSoon) {
-    return safeHistory
-  }
-
-  if (isTooSoon) {
-    return [
-      ...safeHistory.slice(0, -1),
-      {
-        timestamp: snapshot.timestamp,
-        total: snapshot.total,
-      },
-    ]
-  }
-
-  return [...safeHistory, snapshot]
-}
-
 function readPortfolioItemCurrentPrice(position: PortfolioItem): number | null {
   const candidate = position as PortfolioItem & {
     currentPrice?: unknown
     price?: unknown
+    marketPrice?: unknown
   }
 
-  if (typeof candidate.currentPrice === 'number' && Number.isFinite(candidate.currentPrice)) {
+  if (
+    typeof candidate.currentPrice === 'number' &&
+    Number.isFinite(candidate.currentPrice)
+  ) {
     return candidate.currentPrice
+  }
+
+  if (
+    typeof candidate.marketPrice === 'number' &&
+    Number.isFinite(candidate.marketPrice)
+  ) {
+    return candidate.marketPrice
   }
 
   if (typeof candidate.price === 'number' && Number.isFinite(candidate.price)) {
@@ -306,7 +227,10 @@ function buildDashboardStatItems(params: {
   const { totalInvested, totalPatrimony, performanceData } = params
 
   const metricsByLabel = new Map(
-    performanceData.map((item) => [String(item.name ?? '').trim(), toSafeNumber(item.value)])
+    performanceData.map((item) => [
+      String(item.name ?? '').trim(),
+      toSafeNumber(item.value),
+    ])
   )
 
   const readMetric = (label: string): number => metricsByLabel.get(label) ?? 0
@@ -359,21 +283,14 @@ export const useAppViewModel = (): AppViewModel => {
     contribution,
     rebalance,
     alerts,
+    totalInvested,
+    priceStatus,
+    priceError,
+    lastPriceUpdateAt,
+    refreshPrices,
   } = usePortfolioData(state)
 
   const patrimonyHistoryRef = useRef<PatrimonyHistory>(loadPatrimonyHistory())
-
-  useEffect(() => {
-    const tickers = portfolio.map((position) => position.ticker)
-
-    if (tickers.length === 0) {
-      return
-    }
-
-    fetchPrices(tickers).catch((error) => {
-      console.error('❌ erro ao buscar preços', error)
-    })
-  }, [portfolio])
 
   const decision = useMemo<Decision[]>(() => buildDecision(ranking), [ranking])
 
@@ -439,13 +356,28 @@ export const useAppViewModel = (): AppViewModel => {
 
     return {
       ...baseDashboard,
+      totalInvested,
       statItems: buildDashboardStatItems({
-        totalInvested: baseDashboard.totalInvested,
+        totalInvested,
         totalPatrimony: baseDashboard.totalPatrimony,
         performanceData: baseDashboard.performanceData,
       }),
+      priceStatus,
+      priceError,
+      lastPriceUpdateAt,
+      onRefreshPrices: refreshPrices,
     }
-  }, [state.monthlyContribution, ranking.length, decision, dashboardAggregation])
+  }, [
+    state.monthlyContribution,
+    ranking.length,
+    decision,
+    dashboardAggregation,
+    totalInvested,
+    priceStatus,
+    priceError,
+    lastPriceUpdateAt,
+    refreshPrices,
+  ])
 
   const contributionViewModel = useMemo<ContributionViewModel>(
     () => buildContributionViewModel(state, contribution, actions),

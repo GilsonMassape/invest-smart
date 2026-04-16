@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import {
   CartesianGrid,
   Cell,
@@ -19,14 +19,22 @@ type DashboardGenericPoint = {
   ticker?: string
   label?: string
   name?: string
+  benchmarkValue?: number
 }
 
 type DashboardMetricType = 'currency' | 'percentage' | 'number'
+type PriceStatus = 'idle' | 'loading' | 'success' | 'error'
 
 type DashboardMetricItem = {
   label: string
   value: number
   type: DashboardMetricType
+}
+
+type EvolutionChartPoint = {
+  name: string
+  carteira: number
+  benchmark?: number
 }
 
 export type DashboardProps = {
@@ -58,6 +66,10 @@ export type DashboardProps = {
   annualProfitability?: number
   volatility?: number
   volatilityPercentage?: number
+  priceStatus?: PriceStatus
+  priceError?: string | null
+  lastPriceUpdateAt?: number | null
+  onRefreshPrices?: () => Promise<void>
 }
 
 const currencyFormatter = new Intl.NumberFormat('pt-BR', {
@@ -77,6 +89,13 @@ const compactNumberFormatter = new Intl.NumberFormat('pt-BR', {
   maximumFractionDigits: 1,
 })
 
+const dateTimeFormatter = new Intl.DateTimeFormat('pt-BR', {
+  day: '2-digit',
+  month: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
 const CHART_COLORS = [
   '#2563eb',
   '#0f172a',
@@ -91,11 +110,45 @@ function toSafeNumber(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function toSafeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizePoint(input: unknown): DashboardGenericPoint | null {
+  if (!input || typeof input !== 'object') {
+    return null
+  }
+
+  const candidate = input as Partial<DashboardGenericPoint>
+  const value = toSafeNumber(candidate.value)
+
+  return {
+    value,
+    type: toSafeString(candidate.type) || undefined,
+    ticker: toSafeString(candidate.ticker) || undefined,
+    label: toSafeString(candidate.label) || undefined,
+    name: toSafeString(candidate.name) || undefined,
+    benchmarkValue:
+      typeof candidate.benchmarkValue === 'number' &&
+      Number.isFinite(candidate.benchmarkValue)
+        ? candidate.benchmarkValue
+        : undefined,
+  }
+}
+
+function normalizePoints(points: DashboardGenericPoint[]): DashboardGenericPoint[] {
+  if (!Array.isArray(points)) {
+    return []
+  }
+
+  return points
+    .map(normalizePoint)
+    .filter((point): point is DashboardGenericPoint => point !== null)
+}
+
 function getPointLabel(point: DashboardGenericPoint): string {
   const label = point.type ?? point.ticker ?? point.label ?? point.name
-  return typeof label === 'string' && label.trim().length > 0
-    ? label
-    : 'Item'
+  return toSafeString(label) || 'Item'
 }
 
 function formatCurrency(value: number): string {
@@ -121,6 +174,14 @@ function formatMetricValue(value: number, type: DashboardMetricType): string {
     default:
       return String(value)
   }
+}
+
+function formatLastUpdate(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 'Ainda não atualizado'
+  }
+
+  return dateTimeFormatter.format(new Date(value))
 }
 
 function isMetricType(value: unknown): value is DashboardMetricType {
@@ -157,6 +218,7 @@ function readMetricItems(props: DashboardProps): DashboardMetricItem[] {
     }
 
     const validItems = source.filter(isMetricItem)
+
     if (validItems.length > 0) {
       return validItems
     }
@@ -243,21 +305,80 @@ function calculateAllocationPct(value: number, total: number): number {
   return Math.max(0, Math.min((toSafeNumber(value) / total) * 100, 100))
 }
 
+function normalizeEvolutionData(
+  evolutionData: DashboardGenericPoint[]
+): EvolutionChartPoint[] {
+  const normalized = normalizePoints(evolutionData)
+    .map((item, index) => {
+      const label = getPointLabel(item) || `Ponto ${index + 1}`
+
+      return {
+        name: label,
+        carteira: toSafeNumber(item.value),
+        benchmark:
+          typeof item.benchmarkValue === 'number' &&
+          Number.isFinite(item.benchmarkValue)
+            ? item.benchmarkValue
+            : undefined,
+      }
+    })
+    .filter((item) => item.name.trim().length > 0)
+
+  if (normalized.length === 0) {
+    return []
+  }
+
+  if (normalized.length === 1) {
+    const single = normalized[0]
+
+    return [
+      {
+        name: single.name,
+        carteira: single.carteira,
+        benchmark: single.benchmark,
+      },
+      {
+        name: 'Atual',
+        carteira: single.carteira,
+        benchmark: single.benchmark,
+      },
+    ]
+  }
+
+  return normalized
+}
+
+function normalizeInsights(insights: string[]): string[] {
+  if (!Array.isArray(insights)) {
+    return []
+  }
+
+  return insights
+    .map((insight) => toSafeString(insight))
+    .filter((insight) => insight.length > 0)
+}
+
 function SectionHeader({
   title,
   subtitle,
+  aside,
 }: {
   title: string
   subtitle?: string
+  aside?: ReactNode
 }) {
   return (
-    <div className="space-y-1">
-      <h3 className="text-base font-semibold tracking-tight text-slate-950">
-        {title}
-      </h3>
-      {subtitle ? (
-        <p className="text-sm leading-6 text-slate-500">{subtitle}</p>
-      ) : null}
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="space-y-1">
+        <h3 className="text-base font-semibold tracking-tight text-slate-950">
+          {title}
+        </h3>
+        {subtitle ? (
+          <p className="text-sm leading-6 text-slate-500">{subtitle}</p>
+        ) : null}
+      </div>
+
+      {aside ? <div className="shrink-0">{aside}</div> : null}
     </div>
   )
 }
@@ -278,10 +399,19 @@ function SurfaceBlock({
   )
 }
 
-function EmptyState({ message }: { message: string }) {
+function EmptyState({
+  title,
+  message,
+}: {
+  title?: string
+  message: string
+}) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-      {message}
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+      {title ? (
+        <p className="mb-1 font-semibold text-slate-700">{title}</p>
+      ) : null}
+      <p>{message}</p>
     </div>
   )
 }
@@ -303,39 +433,229 @@ function MetricCard({ item }: { item: DashboardMetricItem }) {
   )
 }
 
+function EvolutionHighlight({
+  points,
+}: {
+  points: EvolutionChartPoint[]
+}) {
+  const latestPoint = points[points.length - 1]
+  const previousPoint = points.length > 1 ? points[points.length - 2] : null
+  const delta = previousPoint ? latestPoint.carteira - previousPoint.carteira : 0
+
+  const deltaClass =
+    delta > 0
+      ? 'text-emerald-600'
+      : delta < 0
+        ? 'text-red-600'
+        : 'text-slate-500'
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-slate-400">
+          Último patrimônio
+        </p>
+        <p className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+          {formatCurrency(latestPoint.carteira)}
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          Referência: {latestPoint.name}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <p className="text-[10px] font-medium uppercase tracking-[0.28em] text-slate-400">
+          Variação recente
+        </p>
+        <p className={`mt-1 text-lg font-semibold tracking-tight ${deltaClass}`}>
+          {previousPoint ? formatCurrency(delta) : 'Sem base comparativa'}
+        </p>
+        <p className="mt-1 text-xs text-slate-500">
+          {previousPoint
+            ? `${previousPoint.name} → ${latestPoint.name}`
+            : 'Necessário histórico adicional'}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function hasBenchmarkSeries(points: EvolutionChartPoint[]): boolean {
+  return points.some(
+    (point) =>
+      typeof point.benchmark === 'number' && Number.isFinite(point.benchmark)
+  )
+}
+
+function PriceStatusBadge({
+  priceStatus,
+}: {
+  priceStatus: PriceStatus
+}) {
+  const ui =
+    priceStatus === 'loading'
+      ? {
+          label: 'Atualizando preços',
+          className: 'border-blue-200 bg-blue-50 text-blue-700',
+        }
+      : priceStatus === 'error'
+        ? {
+            label: 'Falha na atualização',
+            className: 'border-red-200 bg-red-50 text-red-700',
+          }
+        : priceStatus === 'success'
+          ? {
+              label: 'Preços atualizados',
+              className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+            }
+          : {
+              label: 'Aguardando preços',
+              className: 'border-slate-200 bg-slate-50 text-slate-600',
+            }
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${ui.className}`}
+    >
+      {ui.label}
+    </span>
+  )
+}
+
+function PriceStatusPanel({
+  priceStatus,
+  priceError,
+  lastPriceUpdateAt,
+}: {
+  priceStatus: PriceStatus
+  priceError: string | null
+  lastPriceUpdateAt: number | null
+}) {
+  const message =
+    priceStatus === 'loading'
+      ? 'Buscando cotações mais recentes para recalcular patrimônio e métricas.'
+      : priceStatus === 'error'
+        ? 'Não foi possível concluir a atualização automática dos preços.'
+        : priceStatus === 'success'
+          ? 'Os preços mais recentes já foram incorporados ao painel.'
+          : 'O painel ainda não recebeu uma atualização de preços nesta sessão.'
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-slate-800">{message}</p>
+          <p className="text-xs text-slate-500">
+            Última atualização: {formatLastUpdate(lastPriceUpdateAt)}
+          </p>
+        </div>
+
+        <PriceStatusBadge priceStatus={priceStatus} />
+      </div>
+
+      {priceError ? (
+        <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {priceError}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 export function Dashboard(props: DashboardProps) {
-  const {
-    totalPatrimony,
-    distributionByType,
-    distributionByAsset,
-    concentrationData,
-    evolutionData,
-    insights,
-  } = props
+  const [isManualRefreshRunning, setIsManualRefreshRunning] = useState(false)
 
-  const safeTotalPatrimony = toSafeNumber(totalPatrimony)
-  const metricItems = readMetricItems(props)
+  const priceStatus = props.priceStatus ?? 'idle'
+  const priceError = props.priceError ?? null
+  const lastPriceUpdateAt = props.lastPriceUpdateAt ?? null
 
-  const topAssets = distributionByAsset.slice(0, 8)
-  const topConcentration = concentrationData.slice(0, 5)
-  const latestEvolutionPoints = evolutionData.slice(-6)
+  const distributionByType = useMemo(
+    () => normalizePoints(props.distributionByType),
+    [props.distributionByType]
+  )
 
+  const distributionByAsset = useMemo(
+    () => normalizePoints(props.distributionByAsset),
+    [props.distributionByAsset]
+  )
+
+  const concentrationData = useMemo(
+    () => normalizePoints(props.concentrationData),
+    [props.concentrationData]
+  )
+
+  const insights = useMemo(
+    () => normalizeInsights(props.insights),
+    [props.insights]
+  )
+
+  const safeTotalPatrimony = toSafeNumber(props.totalPatrimony)
+  const metricItems = useMemo(() => readMetricItems(props), [props])
+
+  const topAssets = useMemo(() => distributionByAsset.slice(0, 8), [distributionByAsset])
+
+  const topConcentration = useMemo(
+    () => concentrationData.slice(0, 5),
+    [concentrationData]
+  )
+
+  const normalizedEvolutionPoints = useMemo(
+    () => normalizeEvolutionData(props.evolutionData),
+    [props.evolutionData]
+  )
+
+  const hasBenchmark = hasBenchmarkSeries(normalizedEvolutionPoints)
   const hasTypeDistribution = distributionByType.length > 0
   const hasTopAssets = topAssets.length > 0
   const hasTopConcentration = topConcentration.length > 0
   const hasMetricItems = metricItems.length > 0
-  const hasEvolutionChart = latestEvolutionPoints.length > 1
-  const hasSingleEvolutionPoint = latestEvolutionPoints.length === 1
+  const hasEvolutionData = normalizedEvolutionPoints.length > 0
+  const hasComparableEvolution = normalizedEvolutionPoints.length > 1
+
+  const isRefreshDisabled =
+    isManualRefreshRunning || priceStatus === 'loading' || !props.onRefreshPrices
+
+  const handleRefreshPrices = useCallback(async () => {
+    if (!props.onRefreshPrices || isManualRefreshRunning) {
+      return
+    }
+
+    setIsManualRefreshRunning(true)
+
+    try {
+      await props.onRefreshPrices()
+    } finally {
+      setIsManualRefreshRunning(false)
+    }
+  }, [props.onRefreshPrices, isManualRefreshRunning])
 
   return (
     <section className="space-y-8">
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold tracking-tight text-slate-950">
-          Visão estratégica da carteira
-        </h2>
-        <p className="text-sm leading-6 text-slate-500">
-          Leitura consolidada de alocação, concentração e indicadores-chave.
-        </p>
+      <div className="space-y-4">
+        <SectionHeader
+          title="Visão estratégica da carteira"
+          subtitle="Leitura consolidada de alocação, concentração e indicadores-chave."
+          aside={
+            <button
+              type="button"
+              onClick={() => {
+                void handleRefreshPrices()
+              }}
+              disabled={isRefreshDisabled}
+              className="inline-flex h-10 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isManualRefreshRunning || priceStatus === 'loading'
+                ? 'Atualizando...'
+                : 'Atualizar preços'}
+            </button>
+          }
+        />
+
+        <PriceStatusPanel
+          priceStatus={priceStatus}
+          priceError={priceError}
+          lastPriceUpdateAt={lastPriceUpdateAt}
+        />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.05fr_1.95fr]">
@@ -356,17 +676,28 @@ export function Dashboard(props: DashboardProps) {
                 </div>
               ))
             ) : (
-              <EmptyState message="Nenhum insight disponível." />
+              <EmptyState
+                title="Nenhum insight disponível"
+                message="Assim que houver sinais relevantes na carteira, eles aparecerão aqui."
+              />
             )}
           </div>
         </SurfaceBlock>
 
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
           {hasMetricItems ? (
-            metricItems.map((item) => <MetricCard key={item.label} item={item} />)
+            metricItems.map((item) => (
+              <MetricCard
+                key={item.label}
+                item={item}
+              />
+            ))
           ) : (
             <div className="sm:col-span-2 lg:col-span-4 xl:col-span-7">
-              <EmptyState message="Nenhum indicador disponível." />
+              <EmptyState
+                title="Indicadores indisponíveis"
+                message="Ainda não há dados suficientes para montar o resumo executivo."
+              />
             </div>
           )}
         </div>
@@ -384,7 +715,10 @@ export function Dashboard(props: DashboardProps) {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={distributionByType}
+                    data={distributionByType.map((item) => ({
+                      ...item,
+                      label: getPointLabel(item),
+                    }))}
                     dataKey="value"
                     nameKey="label"
                     innerRadius={70}
@@ -462,7 +796,10 @@ export function Dashboard(props: DashboardProps) {
                 )
               })
             ) : (
-              <EmptyState message="Nenhum ativo disponível." />
+              <EmptyState
+                title="Nenhum ativo disponível"
+                message="Cadastre posições na carteira para visualizar a distribuição por ativo."
+              />
             )}
           </div>
         </SurfaceBlock>
@@ -505,7 +842,10 @@ export function Dashboard(props: DashboardProps) {
                 )
               })
             ) : (
-              <EmptyState message="Nenhum dado de concentração disponível." />
+              <EmptyState
+                title="Sem concentração relevante"
+                message="A concentração aparecerá aqui quando houver patrimônio distribuído entre ativos."
+              />
             )}
           </div>
         </SurfaceBlock>
@@ -516,58 +856,106 @@ export function Dashboard(props: DashboardProps) {
             subtitle="Leitura visual da trajetória recente da carteira."
           />
 
-          <div className="mt-4">
-            {hasEvolutionChart ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                <div className="mb-3">
-                  <p className="text-[10px] font-medium uppercase tracking-[0.32em] text-slate-400">
-                    Evolução recente
-                  </p>
-                </div>
+          <div className="mt-4 space-y-4">
+            {hasEvolutionData ? (
+              <>
+                <EvolutionHighlight points={normalizedEvolutionPoints} />
 
-                <div className="h-[260px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={latestEvolutionPoints}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis
-                        dataKey="name"
-                        tick={{ fontSize: 11 }}
-                        stroke="#94a3b8"
-                      />
-                      <YAxis
-                        tickFormatter={(value) =>
-                          compactNumberFormatter.format(Number(value))
-                        }
-                        tick={{ fontSize: 11 }}
-                        stroke="#94a3b8"
-                      />
-                      <Tooltip
-                        formatter={(value) => formatCurrency(Number(value ?? 0))}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="value"
-                        stroke="#0f172a"
-                        strokeWidth={2.5}
-                        dot={{ r: 3 }}
-                        activeDot={{ r: 5 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            ) : hasSingleEvolutionPoint ? (
-              <div className="flex justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <span className="text-sm text-slate-700">
-                  Histórico • {latestEvolutionPoints[0].name}
-                </span>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-medium uppercase tracking-[0.32em] text-slate-400">
+                        Evolução recente
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {hasComparableEvolution
+                          ? `${normalizedEvolutionPoints.length} pontos no histórico`
+                          : 'Exibindo histórico disponível'}
+                      </p>
+                    </div>
 
-                <span className="shrink-0 text-sm font-semibold text-slate-900">
-                  {formatCurrency(latestEvolutionPoints[0].value)}
-                </span>
-              </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                      <span className="inline-flex items-center gap-2">
+                        <span className="h-2.5 w-2.5 rounded-full bg-slate-900" />
+                        Carteira
+                      </span>
+
+                      {hasBenchmark ? (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="h-2.5 w-2.5 rounded-full bg-slate-400" />
+                          Benchmark
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart
+                        data={normalizedEvolutionPoints}
+                        margin={{ top: 8, right: 12, bottom: 8, left: 4 }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis
+                          dataKey="name"
+                          tick={{ fontSize: 11 }}
+                          stroke="#94a3b8"
+                          minTickGap={24}
+                        />
+                        <YAxis
+                          width={72}
+                          tickFormatter={(value) =>
+                            compactNumberFormatter.format(Number(value))
+                          }
+                          tick={{ fontSize: 11 }}
+                          stroke="#94a3b8"
+                        />
+                        <Tooltip
+                          formatter={(value, name) => {
+                            const label =
+                              name === 'benchmark' ? 'Benchmark' : 'Carteira'
+                            return [formatCurrency(Number(value ?? 0)), label]
+                          }}
+                          labelFormatter={(label) => `Período: ${String(label)}`}
+                        />
+                        <Legend
+                          formatter={(value) =>
+                            value === 'benchmark' ? 'Benchmark' : 'Carteira'
+                          }
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="carteira"
+                          name="carteira"
+                          stroke="#0f172a"
+                          strokeWidth={2.5}
+                          dot={{ r: 3 }}
+                          activeDot={{ r: 5 }}
+                          connectNulls
+                        />
+                        {hasBenchmark ? (
+                          <Line
+                            type="monotone"
+                            dataKey="benchmark"
+                            name="benchmark"
+                            stroke="#94a3b8"
+                            strokeWidth={2}
+                            strokeDasharray="6 4"
+                            dot={false}
+                            activeDot={{ r: 4 }}
+                            connectNulls
+                          />
+                        ) : null}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </>
             ) : (
-              <EmptyState message="Sem histórico suficiente para exibir evolução." />
+              <EmptyState
+                title="Histórico insuficiente"
+                message="À medida que o patrimônio for sendo registrado, a evolução aparecerá aqui."
+              />
             )}
           </div>
         </SurfaceBlock>

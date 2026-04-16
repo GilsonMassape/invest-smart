@@ -229,7 +229,8 @@ function buildDashboardStatItems(
   return [
     {
       label: 'Investido',
-      value: readNumber(dashboard, 'totalInvested', 'invested', 'investedValue') ?? 0,
+      value:
+        readNumber(dashboard, 'totalInvested', 'invested', 'investedValue') ?? 0,
       type: 'currency',
     },
     {
@@ -387,7 +388,7 @@ const App = () => {
           </header>
 
           <div className="space-y-8 md:space-y-10">
-            <section className="grid gap-6 lg:grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
+            <section className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
               <div className="xl:col-span-8">
                 <SurfaceCard className="h-full bg-white/95 backdrop-blur-sm">
                   <div className="space-y-5">

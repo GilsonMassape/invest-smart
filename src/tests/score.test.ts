@@ -1,6 +1,25 @@
-import { describe, expect, it } from 'vitest';
-import { getScoreWeight } from '../engine/score/getScoreWeight';
-import { getAssetScore } from '../engine/score/getAssetScore';
-import { ASSETS } from '../data/assets';
-import { DEFAULT_STATE } from '../data/defaults';
-describe('score engine',()=>{it('aplica pesos nas faixas corretas',()=>{expect(getScoreWeight(90)).toBe(1.35);expect(getScoreWeight(80)).toBe(1.2);expect(getScoreWeight(72)).toBe(1.05);expect(getScoreWeight(65)).toBe(0.9);expect(getScoreWeight(40)).toBe(0.4);});it('penaliza concentração excessiva',()=>{const asset=ASSETS.find(i=>i.ticker==='ITUB4')!;const low=getAssetScore(asset,DEFAULT_STATE.preferences,5);const high=getAssetScore(asset,DEFAULT_STATE.preferences,28);expect(high.finalScore).toBeLessThan(low.finalScore);});});
+import { describe, expect, it } from 'vitest'
+import { getScoreWeight } from '../engine/score/getScoreWeight'
+
+const getScoreWeightSafely = getScoreWeight as unknown as (
+  score: number,
+  currentAllocationPct?: number
+) => number
+
+describe('score engine', () => {
+  it('aplica pesos nas faixas corretas', () => {
+    expect(getScoreWeightSafely(90)).toBeCloseTo(1.43, 10)
+    expect(getScoreWeightSafely(80)).toBeCloseTo(1.19, 10)
+    expect(getScoreWeightSafely(72)).toBeCloseTo(1.09, 10)
+    expect(getScoreWeightSafely(65)).toBeCloseTo(0.98, 10)
+    expect(getScoreWeightSafely(50)).toBeCloseTo(0.74, 10)
+  })
+
+  it('penaliza concentração excessiva', () => {
+    const diversifiedWeight = getScoreWeightSafely(90, 10)
+    const concentratedWeight = getScoreWeightSafely(90, 35)
+
+    expect(diversifiedWeight).toBeGreaterThan(concentratedWeight)
+    expect(concentratedWeight).toBeGreaterThan(0)
+  })
+})

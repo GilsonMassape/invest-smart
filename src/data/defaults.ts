@@ -1,4 +1,4 @@
-import type { AppState } from '../domain/types';
+import type { AppState } from '../domain/types'
 
 export const DEFAULT_STATE: AppState = {
   positions: [
@@ -6,19 +6,19 @@ export const DEFAULT_STATE: AppState = {
       ticker: 'ITUB4',
       quantity: 40,
       avgPrice: 31.15,
-      currentPrice: null,
+      currentPrice: 33.8,
     },
     {
       ticker: 'HGLG11',
       quantity: 10,
       avgPrice: 158.1,
-      currentPrice: null,
+      currentPrice: 161.9,
     },
     {
       ticker: 'IVVB11',
       quantity: 4,
       avgPrice: 295,
-      currentPrice: null,
+      currentPrice: 312.7,
     },
   ],
   preferences: {
@@ -29,4 +29,4 @@ export const DEFAULT_STATE: AppState = {
   },
   monthlyContribution: 2000,
   filterType: 'TODOS',
-};
+}

@@ -34,6 +34,18 @@ function resolveAction(currentPct: number): RebalanceSuggestion['action'] {
   return 'MANTER'
 }
 
+function resolveTargetValue(
+  currentValue: number,
+  currentPct: number,
+  targetPct: number
+): number {
+  if (currentPct <= 0) {
+    return currentValue
+  }
+
+  return currentValue * (targetPct / currentPct)
+}
+
 function sortRebalanceSuggestions(
   left: RebalanceSuggestion,
   right: RebalanceSuggestion
@@ -55,8 +67,8 @@ function sortRebalanceSuggestions(
     return actionDiff
   }
 
-  const leftMagnitude = Math.abs(toSafeNumber(left.deltaValue))
-  const rightMagnitude = Math.abs(toSafeNumber(right.deltaValue))
+  const leftMagnitude = Math.abs(toSafeNumber(left.deltaValue ?? left.diffValue))
+  const rightMagnitude = Math.abs(toSafeNumber(right.deltaValue ?? right.diffValue))
 
   if (rightMagnitude !== leftMagnitude) {
     return rightMagnitude - leftMagnitude
@@ -66,7 +78,7 @@ function sortRebalanceSuggestions(
 }
 
 export function buildRebalance(
-  ranking: RankedAsset[]
+  ranking: readonly RankedAsset[]
 ): RebalanceSuggestion[] {
   if (!Array.isArray(ranking) || ranking.length === 0) {
     return []
@@ -76,10 +88,7 @@ export function buildRebalance(
     const currentPct = toSafeNumber(asset.currentAllocationPct)
     const currentValue = toSafeNumber(asset.currentMarketValue)
     const targetPct = resolveTargetPct(currentPct)
-
-    const targetValue =
-      currentPct > 0 ? currentValue * (targetPct / currentPct) : currentValue
-
+    const targetValue = resolveTargetValue(currentValue, currentPct, targetPct)
     const deltaValue = targetValue - currentValue
 
     return {
