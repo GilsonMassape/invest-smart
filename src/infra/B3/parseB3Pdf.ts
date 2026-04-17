@@ -2,6 +2,9 @@ import type { B3ParsedPosition } from '../../domain/import/b3Import'
 
 type PdfTextItem = {
   str?: string
+  transform?: number[]
+  width?: number
+  height?: number
 }
 
 type PdfTextContent = {
@@ -12,6 +15,12 @@ type CandidateRow = {
   ticker: string
   quantity: number
   avgPrice: number
+}
+
+type PositionedToken = {
+  text: string
+  x: number
+  y: number
 }
 
 const SECTION_HINTS = [
@@ -26,14 +35,25 @@ const SECTION_HINTS = [
   'preco medio de compra',
 ]
 
+const STOP_SECTION_HINTS = [
+  'resumo dos investimentos',
+  'evolução patrimonial',
+  'evolucao patrimonial',
+  'movimentação',
+  'movimentacao',
+  'negociação',
+  'negociacao',
+  'proventos',
+  'lançamentos',
+  'lancamentos',
+  'extrato',
+]
+
 const IGNORED_LINE_HINTS = [
   'movimentação',
   'movimentacao',
   'negociação',
   'negociacao',
-  'data',
-  'cpf',
-  'cnpj',
   'canal eletrônico',
   'canal eletronico',
   'instituição',
@@ -41,6 +61,8 @@ const IGNORED_LINE_HINTS = [
   'agência',
   'agencia',
   'conta',
+  'cpf',
+  'cnpj',
   'código',
   'codigo',
   'resumo',
@@ -48,6 +70,10 @@ const IGNORED_LINE_HINTS = [
   'observacao',
   'valor total',
   'total geral',
+  'página',
+  'pagina',
+  'ouvidoria',
+  'sac',
 ]
 
 function normalizeText(value: string): string {
@@ -93,13 +119,18 @@ function isLikelySectionLine(value: string): boolean {
   return SECTION_HINTS.some((hint) => normalized.includes(hint))
 }
 
+function isStopSectionLine(value: string): boolean {
+  const normalized = normalizeSearchText(value)
+  return STOP_SECTION_HINTS.some((hint) => normalized.includes(hint))
+}
+
 function isIgnoredLine(value: string): boolean {
   const normalized = normalizeSearchText(value)
   return IGNORED_LINE_HINTS.some((hint) => normalized.includes(hint))
 }
 
 function isLikelyQuantity(value: number): boolean {
-  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value) && value < 100_000_000
 }
 
 function isLikelyAvgPrice(value: number): boolean {
@@ -124,29 +155,6 @@ function extractTickerIndexes(tokens: readonly string[]): number[] {
   return indexes
 }
 
-function extractNumericCandidates(
-  tokens: readonly string[],
-  startIndex: number,
-  maxDistance: number,
-): number[] {
-  const results: number[] = []
-
-  for (
-    let index = startIndex;
-    index < tokens.length && index < startIndex + maxDistance;
-    index += 1
-  ) {
-    const token = tokens[index] ?? ''
-    const parsed = parseBrazilianNumber(token)
-
-    if (parsed > 0) {
-      results.push(parsed)
-    }
-  }
-
-  return results
-}
-
 function buildCandidateRowFromTokens(
   tokens: readonly string[],
   tickerIndex: number,
@@ -160,12 +168,12 @@ function buildCandidateRowFromTokens(
     return null
   }
 
-  const numericCandidates = extractNumericCandidates(relevantTokens, 0, 12)
-
   let quantity = 0
   let avgPrice = 0
 
-  for (const candidate of numericCandidates) {
+  for (const token of relevantTokens) {
+    const candidate = parseBrazilianNumber(token)
+
     if (!quantity && isLikelyQuantity(candidate)) {
       quantity = candidate
       continue
@@ -207,11 +215,9 @@ function extractPositionsFromLine(line: string): B3ParsedPosition[] {
   for (const tickerIndex of tickerIndexes) {
     const candidate = buildCandidateRowFromTokens(tokens, tickerIndex)
 
-    if (!candidate) {
-      continue
+    if (candidate) {
+      results.push(candidate)
     }
-
-    results.push(candidate)
   }
 
   return results
@@ -240,26 +246,26 @@ function deduplicatePositions(
     .map(([ticker, data]) => ({
       ticker,
       quantity: roundQuantity(data.quantity),
-      avgPrice:
-        data.quantity > 0 ? roundPrice(data.totalCost / data.quantity) : 0,
+      avgPrice: data.quantity > 0 ? roundPrice(data.totalCost / data.quantity) : 0,
     }))
     .filter((position) => position.quantity > 0 && position.avgPrice > 0)
     .sort((a, b) => a.ticker.localeCompare(b.ticker))
 }
 
-function splitRelevantLines(text: string): string[] {
-  const rawLines = text
-    .split('\n')
-    .map((line) => normalizeText(line))
-    .filter(Boolean)
+function splitRelevantLines(lines: string[]): string[] {
+  const normalizedLines = lines.map((line) => normalizeText(line)).filter(Boolean)
 
   const relevantLines: string[] = []
   let inRelevantSection = false
 
-  for (const line of rawLines) {
+  for (const line of normalizedLines) {
     if (isLikelySectionLine(line)) {
       inRelevantSection = true
       continue
+    }
+
+    if (inRelevantSection && isStopSectionLine(line)) {
+      break
     }
 
     if (!inRelevantSection) {
@@ -269,13 +275,74 @@ function splitRelevantLines(text: string): string[] {
     relevantLines.push(line)
   }
 
-  return relevantLines.length > 0 ? relevantLines : rawLines
+  return relevantLines.length > 0 ? relevantLines : normalizedLines
 }
 
-function extractPositionsFromText(text: string): B3ParsedPosition[] {
-  const lines = splitRelevantLines(text)
-  const extracted = lines.flatMap(extractPositionsFromLine)
+function extractPositionsFromLines(lines: string[]): B3ParsedPosition[] {
+  const relevantLines = splitRelevantLines(lines)
+  const extracted = relevantLines.flatMap(extractPositionsFromLine)
   return deduplicatePositions(extracted)
+}
+
+function toPositionedToken(item: PdfTextItem): PositionedToken | null {
+  const text = normalizeText(item.str ?? '')
+
+  if (!text) {
+    return null
+  }
+
+  const transform = Array.isArray(item.transform) ? item.transform : []
+  const x = typeof transform[4] === 'number' ? transform[4] : 0
+  const y = typeof transform[5] === 'number' ? transform[5] : 0
+
+  return { text, x, y }
+}
+
+function buildLinesFromPageItems(items: PdfTextItem[]): string[] {
+  const positionedTokens = items
+    .map(toPositionedToken)
+    .filter((item): item is PositionedToken => item !== null)
+
+  if (positionedTokens.length === 0) {
+    return []
+  }
+
+  const sortedTokens = positionedTokens.sort((a, b) => {
+    const yDiff = b.y - a.y
+
+    if (Math.abs(yDiff) > 2) {
+      return yDiff
+    }
+
+    return a.x - b.x
+  })
+
+  const rows: Array<{ y: number; tokens: PositionedToken[] }> = []
+
+  for (const token of sortedTokens) {
+    const existingRow = rows.find((row) => Math.abs(row.y - token.y) <= 2)
+
+    if (existingRow) {
+      existingRow.tokens.push(token)
+      continue
+    }
+
+    rows.push({
+      y: token.y,
+      tokens: [token],
+    })
+  }
+
+  return rows
+    .sort((a, b) => b.y - a.y)
+    .map((row) =>
+      row.tokens
+        .sort((a, b) => a.x - b.x)
+        .map((token) => token.text)
+        .join(' ')
+    )
+    .map((line) => normalizeText(line))
+    .filter(Boolean)
 }
 
 export async function parseB3Pdf(file: File): Promise<B3ParsedPosition[]> {
@@ -294,19 +361,15 @@ export async function parseB3Pdf(file: File): Promise<B3ParsedPosition[]> {
     isEvalSupported: false,
   }).promise
 
-  const pagesText: string[] = []
+  const allLines: string[] = []
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber)
     const content = (await page.getTextContent()) as PdfTextContent
+    const pageLines = buildLinesFromPageItems(content.items)
 
-    const pageText = content.items
-      .map((item) => normalizeText(item.str ?? ''))
-      .filter(Boolean)
-      .join('\n')
-
-    pagesText.push(pageText)
+    allLines.push(...pageLines)
   }
 
-  return extractPositionsFromText(pagesText.join('\n'))
+  return extractPositionsFromLines(allLines)
 }
