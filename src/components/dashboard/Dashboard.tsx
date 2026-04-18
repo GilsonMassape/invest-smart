@@ -37,6 +37,11 @@ type EvolutionChartPoint = {
   benchmark?: number
 }
 
+type ParsedInsight = {
+  title: string
+  reason: string
+}
+
 export type DashboardProps = {
   totalPatrimony: number
   distributionByType: DashboardGenericPoint[]
@@ -358,6 +363,37 @@ function normalizeInsights(insights: string[]): string[] {
     .filter((insight) => insight.length > 0)
 }
 
+function parseInsight(insight: string): ParsedInsight {
+  const normalized = toSafeString(insight)
+
+  if (!normalized) {
+    return {
+      title: 'Insight',
+      reason: 'Motivo indisponível.',
+    }
+  }
+
+  const separators = [' — ', ' - ', ': ']
+
+  for (const separator of separators) {
+    const separatorIndex = normalized.indexOf(separator)
+
+    if (separatorIndex > 0) {
+      const title = normalized.slice(0, separatorIndex).trim()
+      const reason = normalized.slice(separatorIndex + separator.length).trim()
+
+      if (title && reason) {
+        return { title, reason }
+      }
+    }
+  }
+
+  return {
+    title: normalized,
+    reason: 'Detalhamento não informado pelo motor de insights.',
+  }
+}
+
 function splitCurrency(formattedValue: string): { prefix: string; amount: string } {
   const normalized = formattedValue.trim()
 
@@ -445,7 +481,9 @@ function CurrencyMetricValue({
     <div className="min-w-0">
       <div className="flex items-end gap-2">
         {prefix ? (
-          <span className={`shrink-0 text-base font-semibold leading-none md:text-lg ${toneClass}`}>
+          <span
+            className={`shrink-0 text-base font-semibold leading-none md:text-lg ${toneClass}`}
+          >
             {prefix}
           </span>
         ) : null}
@@ -496,6 +534,42 @@ function MetricCard({ item }: { item: DashboardMetricItem }) {
         )}
       </div>
     </div>
+  )
+}
+
+function InsightCard({
+  insight,
+  isOpen,
+  onToggle,
+}: {
+  insight: string
+  isOpen: boolean
+  onToggle: () => void
+}) {
+  const parsed = parseInsight(insight)
+
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="w-full rounded-2xl border border-emerald-200/60 bg-white px-4 py-3 text-left text-sm font-medium leading-6 text-slate-800 transition hover:bg-emerald-50/40"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="break-words">{parsed.title}</p>
+
+          {isOpen ? (
+            <p className="mt-2 text-sm font-normal leading-6 text-slate-600">
+              {parsed.reason}
+            </p>
+          ) : null}
+        </div>
+
+        <span className="shrink-0 text-sm font-semibold text-emerald-700">
+          {isOpen ? '−' : '+'}
+        </span>
+      </div>
+    </button>
   )
 }
 
@@ -630,6 +704,7 @@ function PriceStatusPanel({
 
 export function Dashboard(props: DashboardProps) {
   const [isManualRefreshRunning, setIsManualRefreshRunning] = useState(false)
+  const [openInsightIndex, setOpenInsightIndex] = useState<number | null>(null)
 
   const priceStatus = props.priceStatus ?? 'idle'
   const priceError = props.priceError ?? null
@@ -695,6 +770,10 @@ export function Dashboard(props: DashboardProps) {
     }
   }, [props.onRefreshPrices, isManualRefreshRunning])
 
+  const handleToggleInsight = useCallback((index: number) => {
+    setOpenInsightIndex((current) => (current === index ? null : index))
+  }, [])
+
   return (
     <section className="space-y-8">
       <div className="space-y-4">
@@ -728,18 +807,18 @@ export function Dashboard(props: DashboardProps) {
         <SurfaceBlock className="h-full">
           <SectionHeader
             title="Insights automáticos"
-            subtitle="Leitura objetiva dos sinais mais relevantes da carteira."
+            subtitle="Clique em cada indicação para ver o motivo."
           />
 
           <div className="mt-4 space-y-3">
             {insights.length > 0 ? (
               insights.map((insight, index) => (
-                <div
+                <InsightCard
                   key={`${insight}-${index}`}
-                  className="rounded-2xl border border-emerald-200/60 bg-white px-4 py-3 text-sm font-medium leading-6 text-slate-800"
-                >
-                  {insight}
-                </div>
+                  insight={insight}
+                  isOpen={openInsightIndex === index}
+                  onToggle={() => handleToggleInsight(index)}
+                />
               ))
             ) : (
               <EmptyState
