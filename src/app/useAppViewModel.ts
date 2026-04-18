@@ -26,6 +26,7 @@ import {
   type DashboardAssetCatalogMap,
   type DashboardAssetPoint,
   type DashboardConcentrationPoint,
+  type DashboardInsight,
   type DashboardMetricPoint,
   type DashboardTypePoint,
 } from '../engine/dashboard/buildDashboardViewModel'
@@ -62,7 +63,7 @@ export interface DashboardViewModel {
   concentrationData: DashboardConcentrationPoint[]
   performanceData: DashboardMetricPoint[]
   evolutionData: DashboardMetricPoint[]
-  insights: string[]
+  insights: DashboardInsight[]
   statItems: StatItem[]
   priceStatus: PriceStatus
   priceError: string | null

@@ -12,6 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import type { DashboardInsight } from '../../engine/dashboard/buildDashboardViewModel'
 
 type DashboardGenericPoint = {
   value: number
@@ -37,11 +38,6 @@ type EvolutionChartPoint = {
   benchmark?: number
 }
 
-type ParsedInsight = {
-  title: string
-  reason: string
-}
-
 export type DashboardProps = {
   totalPatrimony: number
   distributionByType: DashboardGenericPoint[]
@@ -49,7 +45,7 @@ export type DashboardProps = {
   concentrationData: DashboardGenericPoint[]
   performanceData: DashboardGenericPoint[]
   evolutionData: DashboardGenericPoint[]
-  insights: string[]
+  insights: DashboardInsight[]
   statItems?: DashboardMetricItem[]
   stats?: DashboardMetricItem[]
   metrics?: DashboardMetricItem[]
@@ -209,6 +205,40 @@ function isMetricItem(value: unknown): value is DashboardMetricItem {
   )
 }
 
+function isDashboardInsight(value: unknown): value is DashboardInsight {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<DashboardInsight>
+
+  return (
+    typeof candidate.id === 'string' &&
+    candidate.id.trim().length > 0 &&
+    typeof candidate.ticker === 'string' &&
+    candidate.ticker.trim().length > 0 &&
+    typeof candidate.title === 'string' &&
+    candidate.title.trim().length > 0 &&
+    typeof candidate.summary === 'string' &&
+    candidate.summary.trim().length > 0 &&
+    typeof candidate.reason === 'string' &&
+    candidate.reason.trim().length > 0 &&
+    typeof candidate.action === 'string' &&
+    candidate.action.trim().length > 0 &&
+    (candidate.tone === 'positive' ||
+      candidate.tone === 'warning' ||
+      candidate.tone === 'negative')
+  )
+}
+
+function normalizeInsights(insights: DashboardInsight[]): DashboardInsight[] {
+  if (!Array.isArray(insights)) {
+    return []
+  }
+
+  return insights.filter(isDashboardInsight)
+}
+
 function readMetricItems(props: DashboardProps): DashboardMetricItem[] {
   const sources = [
     props.statItems,
@@ -353,47 +383,6 @@ function normalizeEvolutionData(
   return normalized
 }
 
-function normalizeInsights(insights: string[]): string[] {
-  if (!Array.isArray(insights)) {
-    return []
-  }
-
-  return insights
-    .map((insight) => toSafeString(insight))
-    .filter((insight) => insight.length > 0)
-}
-
-function parseInsight(insight: string): ParsedInsight {
-  const normalized = toSafeString(insight)
-
-  if (!normalized) {
-    return {
-      title: 'Insight',
-      reason: 'Motivo indisponível.',
-    }
-  }
-
-  const separators = [' — ', ' - ', ': ']
-
-  for (const separator of separators) {
-    const separatorIndex = normalized.indexOf(separator)
-
-    if (separatorIndex > 0) {
-      const title = normalized.slice(0, separatorIndex).trim()
-      const reason = normalized.slice(separatorIndex + separator.length).trim()
-
-      if (title && reason) {
-        return { title, reason }
-      }
-    }
-  }
-
-  return {
-    title: normalized,
-    reason: 'Detalhamento não informado pelo motor de insights.',
-  }
-}
-
 function splitCurrency(formattedValue: string): { prefix: string; amount: string } {
   const normalized = formattedValue.trim()
 
@@ -407,6 +396,48 @@ function splitCurrency(formattedValue: string): { prefix: string; amount: string
   return {
     prefix: 'R$',
     amount: normalized.replace(/^R\$\s*/, ''),
+  }
+}
+
+function getInsightToneClasses(tone: DashboardInsight['tone']): {
+  card: string
+  badge: string
+  icon: string
+} {
+  switch (tone) {
+    case 'positive':
+      return {
+        card: 'border-emerald-200/60 bg-white hover:bg-emerald-50/40',
+        badge: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+        icon: 'text-emerald-700',
+      }
+    case 'negative':
+      return {
+        card: 'border-red-200/60 bg-white hover:bg-red-50/40',
+        badge: 'bg-red-50 text-red-700 border-red-200',
+        icon: 'text-red-700',
+      }
+    default:
+      return {
+        card: 'border-amber-200/60 bg-white hover:bg-amber-50/40',
+        badge: 'bg-amber-50 text-amber-700 border-amber-200',
+        icon: 'text-amber-700',
+      }
+  }
+}
+
+function getInsightActionLabel(action: DashboardInsight['action']): string {
+  switch (action) {
+    case 'COMPRAR_FORTE':
+      return 'Compra forte'
+    case 'COMPRAR':
+      return 'Comprar'
+    case 'REDUZIR':
+      return 'Reduzir'
+    case 'EVITAR':
+      return 'Evitar'
+    default:
+      return action
   }
 }
 
@@ -542,30 +573,54 @@ function InsightCard({
   isOpen,
   onToggle,
 }: {
-  insight: string
+  insight: DashboardInsight
   isOpen: boolean
   onToggle: () => void
 }) {
-  const parsed = parseInsight(insight)
+  const tone = getInsightToneClasses(insight.tone)
+  const confidence = toSafeString(insight.confidence)
 
   return (
     <button
       type="button"
       onClick={onToggle}
-      className="w-full rounded-2xl border border-emerald-200/60 bg-white px-4 py-3 text-left text-sm font-medium leading-6 text-slate-800 transition hover:bg-emerald-50/40"
+      className={`w-full rounded-2xl border px-4 py-3 text-left text-sm leading-6 text-slate-800 transition ${tone.card}`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="break-words">{parsed.title}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-slate-900">
+              {insight.title}
+            </p>
+
+            <span
+              className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${tone.badge}`}
+            >
+              {getInsightActionLabel(insight.action)}
+            </span>
+
+            {confidence ? (
+              <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-[11px] font-medium text-slate-600">
+                {confidence}
+              </span>
+            ) : null}
+          </div>
+
+          <p className="mt-2 text-sm text-slate-600">{insight.summary}</p>
 
           {isOpen ? (
-            <p className="mt-2 text-sm font-normal leading-6 text-slate-600">
-              {parsed.reason}
-            </p>
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+                Motivo detalhado
+              </p>
+              <p className="mt-2 text-sm leading-6 text-slate-700">
+                {insight.reason}
+              </p>
+            </div>
           ) : null}
         </div>
 
-        <span className="shrink-0 text-sm font-semibold text-emerald-700">
+        <span className={`shrink-0 text-sm font-semibold ${tone.icon}`}>
           {isOpen ? '−' : '+'}
         </span>
       </div>
@@ -733,7 +788,10 @@ export function Dashboard(props: DashboardProps) {
   const safeTotalPatrimony = toSafeNumber(props.totalPatrimony)
   const metricItems = useMemo(() => readMetricItems(props), [props])
 
-  const topAssets = useMemo(() => distributionByAsset.slice(0, 8), [distributionByAsset])
+  const topAssets = useMemo(
+    () => distributionByAsset.slice(0, 8),
+    [distributionByAsset]
+  )
 
   const topConcentration = useMemo(
     () => concentrationData.slice(0, 5),
@@ -807,14 +865,14 @@ export function Dashboard(props: DashboardProps) {
         <SurfaceBlock className="h-full">
           <SectionHeader
             title="Insights automáticos"
-            subtitle="Clique em cada indicação para ver o motivo."
+            subtitle="Clique em cada indicação para ver o resumo e o motivo detalhado."
           />
 
           <div className="mt-4 space-y-3">
             {insights.length > 0 ? (
               insights.map((insight, index) => (
                 <InsightCard
-                  key={`${insight}-${index}`}
+                  key={insight.id}
                   insight={insight}
                   isOpen={openInsightIndex === index}
                   onToggle={() => handleToggleInsight(index)}

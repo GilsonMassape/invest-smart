@@ -21,6 +21,17 @@ export type DashboardMetricPoint = Readonly<{
   benchmarkValue?: number
 }>
 
+export type DashboardInsight = Readonly<{
+  id: string
+  ticker: string
+  title: string
+  summary: string
+  reason: string
+  action: Decision['action']
+  confidence?: Decision['confidence']
+  tone: 'positive' | 'warning' | 'negative'
+}>
+
 export type DashboardSourcePosition = Readonly<{
   ticker: string
   quantity: number
@@ -56,7 +67,7 @@ export type DashboardViewModelOutput = Readonly<{
   concentrationData: DashboardConcentrationPoint[]
   performanceData: DashboardMetricPoint[]
   evolutionData: DashboardMetricPoint[]
-  insights: string[]
+  insights: DashboardInsight[]
   statItems: StatItem[]
 }>
 
@@ -90,10 +101,15 @@ const PERFORMANCE_LABELS = {
 const EVOLUTION_MAX_POINTS = 12
 const BENCHMARK_DAILY_RETURN_PCT = 0.04
 const DAY_IN_MS = 86400000
+const MAX_DASHBOARD_INSIGHTS = 4
 
 function toSafeNumber(value: unknown): number {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function toSafeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function normalizeTicker(value: string): string {
@@ -318,29 +334,127 @@ function buildEvolutionData(
   return compressEvolutionPoints(points, EVOLUTION_MAX_POINTS)
 }
 
-function buildDashboardInsights(decision: readonly Decision[]): string[] {
-  const insights: string[] = []
+function buildInsightSummary(decision: Decision): string {
+  const ticker = normalizeTicker(decision.ticker)
 
-  const strongBuy = decision.find((item) => item.action === 'COMPRAR_FORTE')
-  const buy = decision.find((item) => item.action === 'COMPRAR')
-  const reduce = decision.find((item) => item.action === 'REDUZIR')
-  const avoid = decision.find((item) => item.action === 'EVITAR')
+  switch (decision.action) {
+    case 'COMPRAR_FORTE':
+      return `${ticker} aparece como prioridade máxima de aporte no cenário atual.`
+    case 'COMPRAR':
+      return `${ticker} surge como oportunidade de compra para ampliar posição.`
+    case 'REDUZIR':
+      return `${ticker} pede redução para diminuir concentração ou risco.`
+    case 'EVITAR':
+      return `${ticker} não é prioridade para novos aportes neste momento.`
+    default:
+      return `${ticker} exige atenção no contexto atual da carteira.`
+  }
+}
 
-  if (strongBuy) {
-    insights.push(`Forte oportunidade: ${strongBuy.ticker}`)
-  } else if (buy) {
-    insights.push(`Melhor compra: ${buy.ticker}`)
+function buildInsightTitle(decision: Decision): string {
+  const ticker = normalizeTicker(decision.ticker)
+
+  switch (decision.action) {
+    case 'COMPRAR_FORTE':
+      return `Compra forte em ${ticker}`
+    case 'COMPRAR':
+      return `Compra em ${ticker}`
+    case 'REDUZIR':
+      return `Reduzir ${ticker}`
+    case 'EVITAR':
+      return `Evitar ${ticker}`
+    default:
+      return ticker
+  }
+}
+
+function buildInsightReason(decision: Decision): string {
+  const explicitReason = toSafeString(decision.reason)
+
+  if (explicitReason) {
+    return explicitReason
   }
 
-  if (reduce) {
-    insights.push(`Reduzir ${reduce.ticker}`)
+  const ticker = normalizeTicker(decision.ticker)
+  const confidence = toSafeString(decision.confidence)
+
+  switch (decision.action) {
+    case 'COMPRAR_FORTE':
+      return `${ticker} combina bom posicionamento relativo na carteira com sinal forte do motor decisório.${confidence ? ` Confiança: ${confidence}.` : ''}`
+    case 'COMPRAR':
+      return `${ticker} apresenta sinal positivo para aporte adicional, respeitando perfil e cenário atual.${confidence ? ` Confiança: ${confidence}.` : ''}`
+    case 'REDUZIR':
+      return `${ticker} merece ajuste de peso para reduzir desequilíbrio ou concentração excessiva.${confidence ? ` Confiança: ${confidence}.` : ''}`
+    case 'EVITAR':
+      return `${ticker} não oferece assimetria favorável para novo aporte agora.${confidence ? ` Confiança: ${confidence}.` : ''}`
+    default:
+      return `${ticker} foi destacado pelo motor decisório da carteira.`
+  }
+}
+
+function buildInsightTone(
+  action: Decision['action']
+): DashboardInsight['tone'] {
+  switch (action) {
+    case 'COMPRAR_FORTE':
+    case 'COMPRAR':
+      return 'positive'
+    case 'REDUZIR':
+      return 'warning'
+    case 'EVITAR':
+      return 'negative'
+    default:
+      return 'warning'
+  }
+}
+
+function buildDashboardInsights(
+  decisions: readonly Decision[]
+): DashboardInsight[] {
+  if (!Array.isArray(decisions)) {
+    return []
   }
 
-  if (avoid) {
-    insights.push(`Evitar ${avoid.ticker}`)
+  const priorityOrder: Record<string, number> = {
+    COMPRAR_FORTE: 1,
+    COMPRAR: 2,
+    REDUZIR: 3,
+    EVITAR: 4,
   }
 
-  return insights
+  return decisions
+    .filter(
+      (decision) =>
+        decision &&
+        typeof decision.ticker === 'string' &&
+        decision.ticker.trim().length > 0 &&
+        typeof decision.action === 'string'
+    )
+    .map((decision) => {
+      const ticker = normalizeTicker(decision.ticker)
+
+      return {
+        id: `${decision.action}:${ticker}`,
+        ticker,
+        title: buildInsightTitle(decision),
+        summary: buildInsightSummary(decision),
+        reason: buildInsightReason(decision),
+        action: decision.action,
+        confidence: decision.confidence,
+        tone: buildInsightTone(decision.action),
+      } satisfies DashboardInsight
+    })
+    .sort((left, right) => {
+      const leftPriority = priorityOrder[left.action] ?? 99
+      const rightPriority = priorityOrder[right.action] ?? 99
+
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+
+      return left.ticker.localeCompare(right.ticker, 'pt-BR')
+    })
+    .slice(0, MAX_DASHBOARD_INSIGHTS)
 }
 
 function buildDashboardStatItems(
@@ -406,17 +520,9 @@ export function buildDashboardAggregation(
 
   const aggregation = aggregatePortfolio(aggregationPositions)
 
-  const totalPatrimony = aggregationPositions.reduce(
-    (sum, position) =>
-      sum +
-      toSafeNumber(position.quantity) *
-        toSafeNumber(position.currentPrice ?? position.avgPrice),
-    0
-  )
-
   return {
     totalInvested: toSafeNumber(aggregation.totalInvested),
-    totalPatrimony: toSafeNumber(totalPatrimony),
+    totalPatrimony: toSafeNumber(aggregation.totalPatrimony),
     distributionByType: aggregation.distributionByType,
     distributionByAsset: aggregation.distributionByAsset,
     concentrationData: aggregation.concentrationData.slice(0, 10),
