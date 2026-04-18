@@ -3,18 +3,10 @@ import type { B3ParsedPosition } from '../../domain/import/b3Import'
 type PdfTextItem = {
   str?: string
   transform?: number[]
-  width?: number
-  height?: number
 }
 
 type PdfTextContent = {
   items: PdfTextItem[]
-}
-
-type CandidateRow = {
-  ticker: string
-  quantity: number
-  avgPrice: number
 }
 
 type PositionedToken = {
@@ -23,57 +15,21 @@ type PositionedToken = {
   y: number
 }
 
-const SECTION_HINTS = [
-  'posição',
-  'posicao',
-  'custódia',
-  'custodia',
-  'quantidade',
-  'preço médio',
-  'preco medio',
-  'preço médio de compra',
-  'preco medio de compra',
+const ALLOWED_SECTION_HINTS = [
+  'posicao - acoes',
+  'posicao - bdr - brazilian depositary receipts',
+  'posicao - etf - exchange traded fund',
+  'posicao - fii - fundo de investimento imobiliario',
+  'posicao - fundos de investimentos',
 ]
 
 const STOP_SECTION_HINTS = [
-  'resumo dos investimentos',
-  'evolução patrimonial',
-  'evolucao patrimonial',
-  'movimentação',
-  'movimentacao',
-  'negociação',
+  'posicao - cdb - certificado de deposito bancario',
+  'posicao - lca - letra de credito do agronegocio',
+  'posicao - tesouro direto',
+  'proventos recebidos',
+  'reembolsos de emprestimos de ativos',
   'negociacao',
-  'proventos',
-  'lançamentos',
-  'lancamentos',
-  'extrato',
-]
-
-const IGNORED_LINE_HINTS = [
-  'movimentação',
-  'movimentacao',
-  'negociação',
-  'negociacao',
-  'canal eletrônico',
-  'canal eletronico',
-  'instituição',
-  'instituicao',
-  'agência',
-  'agencia',
-  'conta',
-  'cpf',
-  'cnpj',
-  'código',
-  'codigo',
-  'resumo',
-  'observação',
-  'observacao',
-  'valor total',
-  'total geral',
-  'página',
-  'pagina',
-  'ouvidoria',
-  'sac',
 ]
 
 function normalizeText(value: string): string {
@@ -114,9 +70,9 @@ function isValidTicker(value: string): boolean {
   return /^[A-Z]{4}\d{1,2}$/.test(value) || /^[A-Z]{5}\d{1,2}$/.test(value)
 }
 
-function isLikelySectionLine(value: string): boolean {
+function isAllowedSectionLine(value: string): boolean {
   const normalized = normalizeSearchText(value)
-  return SECTION_HINTS.some((hint) => normalized.includes(hint))
+  return ALLOWED_SECTION_HINTS.some((hint) => normalized.includes(hint))
 }
 
 function isStopSectionLine(value: string): boolean {
@@ -124,107 +80,78 @@ function isStopSectionLine(value: string): boolean {
   return STOP_SECTION_HINTS.some((hint) => normalized.includes(hint))
 }
 
-function isIgnoredLine(value: string): boolean {
+function isTableHeaderLine(value: string): boolean {
   const normalized = normalizeSearchText(value)
-  return IGNORED_LINE_HINTS.some((hint) => normalized.includes(hint))
+
+  return (
+    normalized.includes('produto') ||
+    normalized.includes('tipo') ||
+    normalized.includes('instituicao') ||
+    normalized.includes('quantidade') ||
+    normalized.includes('preco de fechamento') ||
+    normalized.includes('valor atualizado') ||
+    normalized.includes('preco unitario atualizado') ||
+    normalized.includes('vencimento')
+  )
 }
 
-function isLikelyQuantity(value: number): boolean {
-  return Number.isFinite(value) && value > 0 && Number.isInteger(value) && value < 100_000_000
+function isIgnorableLine(value: string): boolean {
+  const normalized = normalizeSearchText(value)
+
+  return (
+    normalized.length === 0 ||
+    normalized === 'total' ||
+    normalized.startsWith('r$ ') ||
+    normalized.includes('relatorio mensal consolidado') ||
+    normalized.includes('acesse investidor.b3.com.br') ||
+    /^\d+\/\d+$/.test(normalized) ||
+    isTableHeaderLine(normalized)
+  )
 }
 
-function isLikelyAvgPrice(value: number): boolean {
-  return Number.isFinite(value) && value > 0 && value < 1_000_000
+function extractTicker(value: string): string | null {
+  const match = value.match(/\b([A-Z]{4,5}\d{1,2})\b/)
+  const ticker = match?.[1] ?? null
+  return ticker && isValidTicker(ticker) ? ticker : null
 }
 
-function tokenizeLine(line: string): string[] {
-  return normalizeText(line).split(' ').filter(Boolean)
-}
+function extractRowData(buffer: string): B3ParsedPosition | null {
+  const ticker = extractTicker(buffer)
 
-function extractTickerIndexes(tokens: readonly string[]): number[] {
-  const indexes: number[] = []
-
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = normalizeTicker(tokens[index] ?? '')
-
-    if (isValidTicker(token)) {
-      indexes.push(index)
-    }
-  }
-
-  return indexes
-}
-
-function buildCandidateRowFromTokens(
-  tokens: readonly string[],
-  tickerIndex: number,
-): CandidateRow | null {
-  const ticker = normalizeTicker(tokens[tickerIndex] ?? '')
-  const nextTickerIndex = extractTickerIndexes(tokens).find((index) => index > tickerIndex)
-  const sliceEnd = typeof nextTickerIndex === 'number' ? nextTickerIndex : tokens.length
-  const relevantTokens = tokens.slice(tickerIndex + 1, sliceEnd)
-
-  if (relevantTokens.length === 0) {
+  if (!ticker) {
     return null
   }
 
-  let quantity = 0
-  let avgPrice = 0
+  const tickerIndex = buffer.indexOf(ticker)
+  const slice = tickerIndex >= 0 ? buffer.slice(tickerIndex + ticker.length) : buffer
+  const quantityPriceMatch = slice.match(
+    /(\d{1,3}(?:\.\d{3})*|\d+)\s+R\$\s*([\d.]+,\d{2})/
+  )
 
-  for (const token of relevantTokens) {
-    const candidate = parseBrazilianNumber(token)
-
-    if (!quantity && isLikelyQuantity(candidate)) {
-      quantity = candidate
-      continue
-    }
-
-    if (quantity > 0 && isLikelyAvgPrice(candidate)) {
-      avgPrice = candidate
-      break
-    }
+  if (!quantityPriceMatch) {
+    return null
   }
 
-  if (!isLikelyQuantity(quantity) || !isLikelyAvgPrice(avgPrice)) {
+  const quantity = parseBrazilianNumber(quantityPriceMatch[1] ?? '')
+  const avgPrice = parseBrazilianNumber(quantityPriceMatch[2] ?? '')
+
+  if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
+    return null
+  }
+
+  if (!Number.isFinite(avgPrice) || avgPrice <= 0) {
     return null
   }
 
   return {
-    ticker,
+    ticker: normalizeTicker(ticker),
     quantity: roundQuantity(quantity),
     avgPrice: roundPrice(avgPrice),
   }
 }
 
-function extractPositionsFromLine(line: string): B3ParsedPosition[] {
-  const normalizedLine = normalizeText(line)
-
-  if (!normalizedLine || isIgnoredLine(normalizedLine)) {
-    return []
-  }
-
-  const tokens = tokenizeLine(normalizedLine)
-  const tickerIndexes = extractTickerIndexes(tokens)
-
-  if (tickerIndexes.length === 0) {
-    return []
-  }
-
-  const results: B3ParsedPosition[] = []
-
-  for (const tickerIndex of tickerIndexes) {
-    const candidate = buildCandidateRowFromTokens(tokens, tickerIndex)
-
-    if (candidate) {
-      results.push(candidate)
-    }
-  }
-
-  return results
-}
-
 function deduplicatePositions(
-  positions: B3ParsedPosition[],
+  positions: B3ParsedPosition[]
 ): B3ParsedPosition[] {
   const merged = new Map<string, { quantity: number; totalCost: number }>()
 
@@ -246,42 +173,11 @@ function deduplicatePositions(
     .map(([ticker, data]) => ({
       ticker,
       quantity: roundQuantity(data.quantity),
-      avgPrice: data.quantity > 0 ? roundPrice(data.totalCost / data.quantity) : 0,
+      avgPrice:
+        data.quantity > 0 ? roundPrice(data.totalCost / data.quantity) : 0,
     }))
     .filter((position) => position.quantity > 0 && position.avgPrice > 0)
     .sort((a, b) => a.ticker.localeCompare(b.ticker))
-}
-
-function splitRelevantLines(lines: string[]): string[] {
-  const normalizedLines = lines.map((line) => normalizeText(line)).filter(Boolean)
-
-  const relevantLines: string[] = []
-  let inRelevantSection = false
-
-  for (const line of normalizedLines) {
-    if (isLikelySectionLine(line)) {
-      inRelevantSection = true
-      continue
-    }
-
-    if (inRelevantSection && isStopSectionLine(line)) {
-      break
-    }
-
-    if (!inRelevantSection) {
-      continue
-    }
-
-    relevantLines.push(line)
-  }
-
-  return relevantLines.length > 0 ? relevantLines : normalizedLines
-}
-
-function extractPositionsFromLines(lines: string[]): B3ParsedPosition[] {
-  const relevantLines = splitRelevantLines(lines)
-  const extracted = relevantLines.flatMap(extractPositionsFromLine)
-  return deduplicatePositions(extracted)
 }
 
 function toPositionedToken(item: PdfTextItem): PositionedToken | null {
@@ -307,7 +203,7 @@ function buildLinesFromPageItems(items: PdfTextItem[]): string[] {
     return []
   }
 
-  const sortedTokens = positionedTokens.sort((a, b) => {
+  const sortedTokens = [...positionedTokens].sort((a, b) => {
     const yDiff = b.y - a.y
 
     if (Math.abs(yDiff) > 2) {
@@ -345,12 +241,86 @@ function buildLinesFromPageItems(items: PdfTextItem[]): string[] {
     .filter(Boolean)
 }
 
+function extractPositionsFromLines(lines: string[]): B3ParsedPosition[] {
+  const positions: B3ParsedPosition[] = []
+
+  let inAllowedSection = false
+  let currentBuffer = ''
+
+  const flushBuffer = () => {
+    if (!currentBuffer) {
+      return
+    }
+
+    const parsed = extractRowData(currentBuffer)
+
+    if (parsed) {
+      positions.push(parsed)
+    }
+
+    currentBuffer = ''
+  }
+
+  for (const rawLine of lines) {
+    const line = normalizeText(rawLine)
+
+    if (!line) {
+      continue
+    }
+
+    if (isAllowedSectionLine(line)) {
+      flushBuffer()
+      inAllowedSection = true
+      continue
+    }
+
+    if (isStopSectionLine(line)) {
+      flushBuffer()
+      inAllowedSection = false
+      continue
+    }
+
+    if (!inAllowedSection || isIgnorableLine(line)) {
+      continue
+    }
+
+    const lineTicker = extractTicker(line)
+
+    if (lineTicker) {
+      flushBuffer()
+      currentBuffer = line
+
+      const parsed = extractRowData(currentBuffer)
+      if (parsed) {
+        positions.push(parsed)
+        currentBuffer = ''
+      }
+
+      continue
+    }
+
+    if (currentBuffer) {
+      currentBuffer = normalizeText(`${currentBuffer} ${line}`)
+
+      const parsed = extractRowData(currentBuffer)
+      if (parsed) {
+        positions.push(parsed)
+        currentBuffer = ''
+      }
+    }
+  }
+
+  flushBuffer()
+
+  return deduplicatePositions(positions)
+}
+
 export async function parseB3Pdf(file: File): Promise<B3ParsedPosition[]> {
   const pdfjs = await import('pdfjs-dist')
 
   pdfjs.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.mjs',
-    import.meta.url,
+    import.meta.url
   ).toString()
 
   const arrayBuffer = await file.arrayBuffer()
