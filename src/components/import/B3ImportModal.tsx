@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import type { B3ImportMode, B3ImportPreview } from '../../domain/import/b3Import'
 
 interface B3ImportModalProps {
@@ -113,15 +114,19 @@ export const B3ImportModal = ({
     }
   }, [onCancel])
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-[2px] sm:p-6"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-[2px] sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="b3-import-title"
       aria-describedby="b3-import-description"
+      onClick={onCancel}
     >
-      <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl">
+      <div
+        className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
         <header className="shrink-0 border-b border-slate-200 bg-white px-5 py-5 sm:px-6">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="space-y-2">
@@ -224,7 +229,7 @@ export const B3ImportModal = ({
         <div className="min-h-0 flex-1 overflow-hidden bg-slate-50/70 px-5 py-5 sm:px-6">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white">
             <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-5 py-4">
-              <div className="grid grid-cols-[minmax(120px,1.2fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(120px,0.9fr)] gap-4 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+              <div className="grid min-w-[880px] grid-cols-[minmax(140px,1.4fr)_minmax(120px,1fr)_minmax(120px,1fr)_minmax(120px,1fr)_minmax(140px,1fr)] gap-4 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
                 <span>Ticker</span>
                 <span className="text-right">Atual</span>
                 <span className="text-right">Importado</span>
@@ -233,7 +238,7 @@ export const B3ImportModal = ({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-auto">
               {preview.items.length === 0 ? (
                 <div className="flex h-full items-center justify-center px-6 py-16">
                   <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-center">
@@ -246,14 +251,14 @@ export const B3ImportModal = ({
                   </div>
                 </div>
               ) : (
-                <div className="divide-y divide-slate-100">
+                <div className="min-w-[880px] divide-y divide-slate-100">
                   {preview.items.map((item) => {
                     const status = item.status as PreviewStatus
 
                     return (
                       <div
                         key={item.ticker}
-                        className="grid grid-cols-[minmax(120px,1.2fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(110px,1fr)_minmax(120px,0.9fr)] items-center gap-4 px-5 py-4 text-sm transition hover:bg-slate-50/80"
+                        className="grid grid-cols-[minmax(140px,1.4fr)_minmax(120px,1fr)_minmax(120px,1fr)_minmax(120px,1fr)_minmax(140px,1fr)] items-center gap-4 px-5 py-4 text-sm transition hover:bg-slate-50/80"
                       >
                         <div className="min-w-0">
                           <p className="truncate font-semibold text-slate-900">
@@ -294,7 +299,9 @@ export const B3ImportModal = ({
             <p className="text-sm text-slate-500">
               Modo atual:{' '}
               <span className="font-semibold text-slate-700">
-                {selectedMode === 'MERGE' ? 'Mesclar posições' : 'Substituir carteira'}
+                {selectedMode === 'MERGE'
+                  ? 'Mesclar posições'
+                  : 'Substituir carteira'}
               </span>
             </p>
 
@@ -318,6 +325,7 @@ export const B3ImportModal = ({
           </div>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

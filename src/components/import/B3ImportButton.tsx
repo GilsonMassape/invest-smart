@@ -51,26 +51,34 @@ function normalizeImportedPositions(
     return []
   }
 
-  return positions.filter((position) => {
-    if (!position || typeof position !== 'object') {
-      return false
-    }
+  return positions
+    .filter((position) => {
+      if (!position || typeof position !== 'object') {
+        return false
+      }
 
-    const hasValidTicker =
-      typeof position.ticker === 'string' && position.ticker.trim().length > 0
+      const hasValidTicker =
+        typeof position.ticker === 'string' &&
+        position.ticker.trim().length > 0
 
-    const hasValidQuantity =
-      typeof position.quantity === 'number' &&
-      Number.isFinite(position.quantity) &&
-      position.quantity > 0
+      const hasValidQuantity =
+        typeof position.quantity === 'number' &&
+        Number.isFinite(position.quantity) &&
+        position.quantity > 0
 
-    const hasValidAvgPrice =
-      typeof position.avgPrice === 'number' &&
-      Number.isFinite(position.avgPrice) &&
-      position.avgPrice >= 0
+      const hasValidAvgPrice =
+        typeof position.avgPrice === 'number' &&
+        Number.isFinite(position.avgPrice) &&
+        position.avgPrice >= 0
 
-    return hasValidTicker && hasValidQuantity && hasValidAvgPrice
-  })
+      return hasValidTicker && hasValidQuantity && hasValidAvgPrice
+    })
+    .map((position) => ({
+      ticker: position.ticker.trim().toUpperCase(),
+      quantity: Number(position.quantity.toFixed(8)),
+      avgPrice: Number(position.avgPrice.toFixed(8)),
+    }))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker))
 }
 
 export function B3ImportButton({
@@ -86,6 +94,8 @@ export function B3ImportButton({
   const [errorMessage, setErrorMessage] = useState(EMPTY_ERROR_MESSAGE)
 
   useEffect(() => {
+    isMountedRef.current = true
+
     return () => {
       isMountedRef.current = false
     }
@@ -120,17 +130,18 @@ export function B3ImportButton({
     setParsedPositions([])
     setSelectedMode(INITIAL_MODE)
     setErrorMessage(EMPTY_ERROR_MESSAGE)
+    setIsProcessing(false)
     resetInput()
   }, [resetInput])
 
   const openFilePicker = useCallback(() => {
-    if (isProcessing) {
+    if (isProcessing || hasParsedPositions) {
       return
     }
 
     setErrorMessage(EMPTY_ERROR_MESSAGE)
     inputRef.current?.click()
-  }, [isProcessing])
+  }, [isProcessing, hasParsedPositions])
 
   const handleFileSelection = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -159,18 +170,14 @@ export function B3ImportButton({
 
         const normalizedPositions = normalizeImportedPositions(positions)
 
-        if (normalizedPositions.length === 0) {
-          if (!isMountedRef.current) {
-            return
-          }
-
-          setErrorMessage(
-            'Nenhum ativo elegível foi encontrado no arquivo da B3.'
-          )
+        if (!isMountedRef.current) {
           return
         }
 
-        if (!isMountedRef.current) {
+        if (normalizedPositions.length === 0) {
+          setErrorMessage(
+            'Nenhum ativo elegível foi encontrado no arquivo da B3.'
+          )
           return
         }
 
@@ -223,18 +230,20 @@ export function B3ImportButton({
         onChange={handleFileSelection}
       />
 
-      <button
-        type="button"
-        onClick={openFilePicker}
-        disabled={isProcessing}
-        className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {isProcessing ? 'Importando...' : 'Importar B3'}
-      </button>
+      <div className="flex w-full flex-col gap-2">
+        <button
+          type="button"
+          onClick={openFilePicker}
+          disabled={isProcessing || hasParsedPositions}
+          className="h-11 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {isProcessing ? 'Importando...' : 'Importar B3'}
+        </button>
 
-      {errorMessage ? (
-        <p className="mt-2 text-sm text-red-600">{errorMessage}</p>
-      ) : null}
+        {errorMessage ? (
+          <p className="text-sm text-red-600">{errorMessage}</p>
+        ) : null}
+      </div>
 
       {preview ? (
         <Suspense fallback={null}>
