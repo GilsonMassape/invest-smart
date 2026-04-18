@@ -147,9 +147,59 @@ function normalizePoints(points: DashboardGenericPoint[]): DashboardGenericPoint
     .filter((point): point is DashboardGenericPoint => point !== null)
 }
 
-function getPointLabel(point: DashboardGenericPoint): string {
-  const label = point.type ?? point.ticker ?? point.label ?? point.name
-  return toSafeString(label) || 'Item'
+function normalizeInsights(insights: DashboardInsight[]): DashboardInsight[] {
+  if (!Array.isArray(insights)) {
+    return []
+  }
+
+  return insights.filter(
+    (insight) =>
+      Boolean(insight) &&
+      typeof insight.id === 'string' &&
+      insight.id.trim().length > 0 &&
+      typeof insight.title === 'string' &&
+      insight.title.trim().length > 0 &&
+      typeof insight.summary === 'string' &&
+      insight.summary.trim().length > 0 &&
+      typeof insight.reason === 'string' &&
+      insight.reason.trim().length > 0
+  )
+}
+
+function getTypePointLabel(point: DashboardGenericPoint): string {
+  return (
+    toSafeString(point.label) ||
+    toSafeString(point.type) ||
+    toSafeString(point.name) ||
+    toSafeString(point.ticker) ||
+    'Item'
+  )
+}
+
+function getAssetPointTitle(point: DashboardGenericPoint): string {
+  return (
+    toSafeString(point.ticker) ||
+    toSafeString(point.label) ||
+    toSafeString(point.name) ||
+    toSafeString(point.type) ||
+    'Item'
+  )
+}
+
+function getAssetPointSubtitle(point: DashboardGenericPoint): string | null {
+  const type = toSafeString(point.type)
+  const label = toSafeString(point.label)
+  const ticker = toSafeString(point.ticker)
+
+  if (label && label !== ticker) {
+    return label
+  }
+
+  if (type && type !== ticker) {
+    return type
+  }
+
+  return null
 }
 
 function formatCurrency(value: number): string {
@@ -203,40 +253,6 @@ function isMetricItem(value: unknown): value is DashboardMetricItem {
     Number.isFinite(candidate.value) &&
     isMetricType(candidate.type)
   )
-}
-
-function isDashboardInsight(value: unknown): value is DashboardInsight {
-  if (!value || typeof value !== 'object') {
-    return false
-  }
-
-  const candidate = value as Partial<DashboardInsight>
-
-  return (
-    typeof candidate.id === 'string' &&
-    candidate.id.trim().length > 0 &&
-    typeof candidate.ticker === 'string' &&
-    candidate.ticker.trim().length > 0 &&
-    typeof candidate.title === 'string' &&
-    candidate.title.trim().length > 0 &&
-    typeof candidate.summary === 'string' &&
-    candidate.summary.trim().length > 0 &&
-    typeof candidate.reason === 'string' &&
-    candidate.reason.trim().length > 0 &&
-    typeof candidate.action === 'string' &&
-    candidate.action.trim().length > 0 &&
-    (candidate.tone === 'positive' ||
-      candidate.tone === 'warning' ||
-      candidate.tone === 'negative')
-  )
-}
-
-function normalizeInsights(insights: DashboardInsight[]): DashboardInsight[] {
-  if (!Array.isArray(insights)) {
-    return []
-  }
-
-  return insights.filter(isDashboardInsight)
 }
 
 function readMetricItems(props: DashboardProps): DashboardMetricItem[] {
@@ -345,7 +361,7 @@ function normalizeEvolutionData(
 ): EvolutionChartPoint[] {
   const normalized = normalizePoints(evolutionData)
     .map((item, index) => {
-      const label = getPointLabel(item) || `Ponto ${index + 1}`
+      const label = toSafeString(item.name) || `Ponto ${index + 1}`
 
       return {
         name: label,
@@ -552,7 +568,7 @@ function MetricCard({ item }: { item: DashboardMetricItem }) {
   const toneClass = getMetricToneClass(item)
 
   return (
-    <div className="group relative w-[190px] shrink-0 overflow-hidden rounded-2xl border border-slate-200/50 bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100/50 md:w-[210px]">
+    <div className="relative overflow-hidden rounded-2xl border border-slate-200/50 bg-white px-4 py-4 shadow-sm ring-1 ring-slate-100/50">
       <div className="space-y-1.5">
         <p className="text-[10px] font-medium uppercase tracking-[0.32em] text-slate-400">
           {item.label}
@@ -625,6 +641,75 @@ function InsightCard({
         </span>
       </div>
     </button>
+  )
+}
+
+function AssetBarRow({
+  item,
+  total,
+}: {
+  item: DashboardGenericPoint
+  total: number
+}) {
+  const title = getAssetPointTitle(item)
+  const subtitle = getAssetPointSubtitle(item)
+  const percentage = calculateAllocationPct(item.value, total)
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-800">{title}</p>
+          {subtitle ? (
+            <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+          ) : null}
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p className="text-sm font-semibold text-slate-900">
+            {formatCurrency(item.value)}
+          </p>
+          <p className="text-xs text-slate-500">{formatPercentage(percentage)}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 h-2 rounded-full bg-slate-200">
+        <div
+          className="h-2 rounded-full bg-slate-900 transition-[width]"
+          style={{ width: `${percentage}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function ConcentrationRow({
+  item,
+  total,
+}: {
+  item: DashboardGenericPoint
+  total: number
+}) {
+  const title = getAssetPointTitle(item)
+  const subtitle = getAssetPointSubtitle(item)
+  const percentage = calculateAllocationPct(item.value, total)
+
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-800">{title}</p>
+          {subtitle ? (
+            <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+          ) : null}
+          <p className="mt-1 text-xs text-slate-500">{formatCurrency(item.value)}</p>
+        </div>
+
+        <span className="shrink-0 text-sm font-bold text-slate-900">
+          {formatPercentage(percentage)}
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -794,7 +879,7 @@ export function Dashboard(props: DashboardProps) {
   )
 
   const topConcentration = useMemo(
-    () => concentrationData.slice(0, 5),
+    () => concentrationData.slice(0, 6),
     [concentrationData]
   )
 
@@ -861,8 +946,8 @@ export function Dashboard(props: DashboardProps) {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_minmax(0,1.95fr)]">
-        <SurfaceBlock className="h-full">
+      <div className="grid gap-6 xl:grid-cols-12">
+        <SurfaceBlock className="xl:col-span-4 h-full">
           <SectionHeader
             title="Insights automáticos"
             subtitle="Clique em cada indicação para ver o resumo e o motivo detalhado."
@@ -887,8 +972,13 @@ export function Dashboard(props: DashboardProps) {
           </div>
         </SurfaceBlock>
 
-        <div className="-mx-1 overflow-x-auto px-1 pb-2">
-          <div className="flex min-w-full gap-4">
+        <SurfaceBlock className="xl:col-span-8">
+          <SectionHeader
+            title="Resumo executivo"
+            subtitle="Indicadores principais distribuídos para ocupar melhor o espaço do painel."
+          />
+
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
             {hasMetricItems ? (
               metricItems.map((item) => (
                 <MetricCard
@@ -897,7 +987,7 @@ export function Dashboard(props: DashboardProps) {
                 />
               ))
             ) : (
-              <div className="min-w-full">
+              <div className="sm:col-span-2 2xl:col-span-4">
                 <EmptyState
                   title="Indicadores indisponíveis"
                   message="Ainda não há dados suficientes para montar o resumo executivo."
@@ -905,10 +995,10 @@ export function Dashboard(props: DashboardProps) {
               </div>
             )}
           </div>
-        </div>
+        </SurfaceBlock>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.15fr]">
         <SurfaceBlock>
           <SectionHeader
             title="Distribuição por tipo"
@@ -922,7 +1012,7 @@ export function Dashboard(props: DashboardProps) {
                   <Pie
                     data={distributionByType.map((item) => ({
                       ...item,
-                      label: getPointLabel(item),
+                      label: getTypePointLabel(item),
                     }))}
                     dataKey="value"
                     nameKey="label"
@@ -943,7 +1033,7 @@ export function Dashboard(props: DashboardProps) {
                     labelFormatter={(_, payload) => {
                       const item = payload?.[0]
                         ?.payload as DashboardGenericPoint | undefined
-                      return item ? getPointLabel(item) : ''
+                      return item ? getTypePointLabel(item) : ''
                     }}
                   />
 
@@ -952,7 +1042,7 @@ export function Dashboard(props: DashboardProps) {
                       const payload = entry?.payload as
                         | DashboardGenericPoint
                         | undefined
-                      return payload ? getPointLabel(payload) : ''
+                      return payload ? getTypePointLabel(payload) : ''
                     }}
                   />
                 </PieChart>
@@ -968,89 +1058,53 @@ export function Dashboard(props: DashboardProps) {
         <SurfaceBlock>
           <SectionHeader
             title="Distribuição por ativo"
-            subtitle="Participação relativa dos principais ativos na carteira."
+            subtitle="Principais posições por ticker, com valor e peso relativo."
           />
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
             {hasTopAssets ? (
-              topAssets.map((item, index) => {
-                const label = getPointLabel(item)
-                const widthPct = calculateAllocationPct(
-                  item.value,
-                  safeTotalPatrimony
-                )
-
-                return (
-                  <div key={`${label}-${index}`}>
-                    <div className="mb-1 flex justify-between gap-3 text-sm">
-                      <span className="truncate font-medium text-slate-700">
-                        {label}
-                      </span>
-                      <span className="shrink-0 text-slate-500">
-                        {formatCurrency(item.value)}
-                      </span>
-                    </div>
-
-                    <div className="h-2 rounded-full bg-slate-200">
-                      <div
-                        className="h-2 rounded-full bg-slate-900 transition-[width]"
-                        style={{ width: `${widthPct}%` }}
-                      />
-                    </div>
-                  </div>
-                )
-              })
+              topAssets.map((item, index) => (
+                <AssetBarRow
+                  key={`${getAssetPointTitle(item)}-${index}`}
+                  item={item}
+                  total={safeTotalPatrimony}
+                />
+              ))
             ) : (
-              <EmptyState
-                title="Nenhum ativo disponível"
-                message="Cadastre posições na carteira para visualizar a distribuição por ativo."
-              />
+              <div className="lg:col-span-2">
+                <EmptyState
+                  title="Nenhum ativo disponível"
+                  message="Cadastre posições na carteira para visualizar a distribuição por ativo."
+                />
+              </div>
             )}
           </div>
         </SurfaceBlock>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <SurfaceBlock>
           <SectionHeader
             title="Top concentração"
-            subtitle="Itens com maior peso relativo dentro do patrimônio."
+            subtitle="Ativos com maior peso relativo dentro do patrimônio."
           />
 
-          <div className="mt-4 space-y-4">
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
             {hasTopConcentration ? (
-              topConcentration.map((item, index) => {
-                const label = getPointLabel(item)
-                const pct = calculateAllocationPct(
-                  item.value,
-                  safeTotalPatrimony
-                )
-
-                return (
-                  <div
-                    key={`${label}-${index}`}
-                    className="flex justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-slate-800">
-                        {label}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {formatCurrency(item.value)}
-                      </p>
-                    </div>
-
-                    <span className="shrink-0 text-sm font-bold text-slate-900">
-                      {formatPercentage(pct)}
-                    </span>
-                  </div>
-                )
-              })
+              topConcentration.map((item, index) => (
+                <ConcentrationRow
+                  key={`${getAssetPointTitle(item)}-${index}`}
+                  item={item}
+                  total={safeTotalPatrimony}
+                />
+              ))
             ) : (
-              <EmptyState
-                title="Sem concentração relevante"
-                message="A concentração aparecerá aqui quando houver patrimônio distribuído entre ativos."
-              />
+              <div className="lg:col-span-2">
+                <EmptyState
+                  title="Sem concentração relevante"
+                  message="A concentração aparecerá aqui quando houver patrimônio distribuído entre ativos."
+                />
+              </div>
             )}
           </div>
         </SurfaceBlock>
