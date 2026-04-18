@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { Decision } from '../../domain/types'
 
 type Props = {
@@ -88,9 +88,7 @@ function SectionHeader({
         </h2>
 
         {subtitle ? (
-          <p className="text-sm leading-6 text-slate-500">
-            {subtitle}
-          </p>
+          <p className="text-sm leading-6 text-slate-500">{subtitle}</p>
         ) : null}
       </div>
 
@@ -103,7 +101,15 @@ function SectionHeader({
   )
 }
 
-function DecisionCard({ decision }: { decision: Decision }) {
+function DecisionCard({
+  decision,
+  isOpen,
+  onToggle,
+}: {
+  decision: Decision
+  isOpen: boolean
+  onToggle: () => void
+}) {
   const actionStyle =
     ACTION_STYLE[decision.action] ??
     'bg-slate-100 text-slate-700 border-slate-200'
@@ -113,39 +119,68 @@ function DecisionCard({ decision }: { decision: Decision }) {
     'bg-slate-200 text-slate-600'
 
   const actionLabel = ACTION_LABEL[decision.action] ?? decision.action
+  const hasReason = Boolean(decision.reason)
 
   return (
-    <li className="rounded-2xl border border-slate-200/60 bg-white p-4 shadow-sm ring-1 ring-slate-100/50 transition-all duration-200 hover:shadow-[0_2px_8px_rgba(0,0,0,0.05),0_12px_28px_rgba(0,0,0,0.08)]">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-base font-semibold text-slate-950">
-            {decision.ticker}
-          </span>
+    <li className="rounded-2xl border border-slate-200/60 bg-white shadow-sm ring-1 ring-slate-100/50 transition-all duration-200 hover:shadow-[0_2px_8px_rgba(0,0,0,0.05),0_12px_28px_rgba(0,0,0,0.08)]">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!hasReason}
+        aria-expanded={hasReason ? isOpen : undefined}
+        className="flex w-full items-center justify-between gap-3 p-4 text-left disabled:cursor-default"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-base font-semibold text-slate-950">
+              {decision.ticker}
+            </span>
 
-          <span
-            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${actionStyle}`}
-          >
-            {actionLabel}
-          </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${actionStyle}`}
+            >
+              {actionLabel}
+            </span>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-1 text-xs font-semibold ${confidenceStyle}`}
+            >
+              {decision.confidence ?? '—'}
+            </span>
+
+            {hasReason ? (
+              <span className="text-xs font-medium text-slate-500">
+                {isOpen ? 'Ocultar motivo' : 'Ver motivo'}
+              </span>
+            ) : (
+              <span className="text-xs font-medium text-slate-400">
+                Sem motivo detalhado
+              </span>
+            )}
+          </div>
         </div>
 
-        <span
-          className={`rounded-full px-2 py-1 text-xs font-semibold ${confidenceStyle}`}
-        >
-          {decision.confidence ?? '—'}
-        </span>
-      </div>
+        {hasReason ? (
+          <span className="shrink-0 text-sm font-semibold text-slate-400">
+            {isOpen ? '−' : '+'}
+          </span>
+        ) : null}
+      </button>
 
-      {decision.reason ? (
-        <p className="mt-2 text-sm leading-6 text-slate-500">
-          {decision.reason}
-        </p>
+      {hasReason && isOpen ? (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3">
+          <p className="text-sm leading-6 text-slate-600">{decision.reason}</p>
+        </div>
       ) : null}
     </li>
   )
 }
 
 export default function WhatToDoNowSection({ decisions }: Props) {
+  const [openTicker, setOpenTicker] = useState<string | null>(null)
+
   const topDecisions = useMemo(() => {
     const safeDecisions = buildSafeDecisions(decisions)
 
@@ -164,11 +199,15 @@ export default function WhatToDoNowSection({ decisions }: Props) {
       .slice(0, MAX_ITEMS)
   }, [decisions])
 
+  const handleToggle = useCallback((ticker: string) => {
+    setOpenTicker((current) => (current === ticker ? null : ticker))
+  }, [])
+
   return (
     <section className="space-y-4">
       <SectionHeader
         title="O que fazer agora"
-        subtitle="Ações priorizadas com base no seu perfil e cenário atual."
+        subtitle="Clique em cada indicação para ver o motivo."
         count={topDecisions.length}
       />
 
@@ -182,6 +221,8 @@ export default function WhatToDoNowSection({ decisions }: Props) {
             <DecisionCard
               key={decision.ticker}
               decision={decision}
+              isOpen={openTicker === decision.ticker}
+              onToggle={() => handleToggle(decision.ticker)}
             />
           ))}
         </ul>
