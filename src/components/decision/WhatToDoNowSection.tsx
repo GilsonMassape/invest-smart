@@ -23,16 +23,16 @@ const ACTION_LABEL: Record<string, string> = {
 
 const ACTION_STYLE: Record<string, string> = {
   COMPRAR_FORTE:
-    'border-emerald-400/30 bg-emerald-500/12 text-emerald-300',
-  COMPRAR: 'border-blue-400/30 bg-blue-500/12 text-blue-300',
-  REDUZIR: 'border-amber-400/30 bg-amber-500/12 text-amber-300',
-  EVITAR: 'border-red-400/30 bg-red-500/12 text-red-300',
+    'border-emerald-400/35 bg-emerald-500/15 text-emerald-200',
+  COMPRAR: 'border-blue-400/35 bg-blue-500/15 text-blue-200',
+  REDUZIR: 'border-amber-400/35 bg-amber-500/15 text-amber-200',
+  EVITAR: 'border-red-400/35 bg-red-500/15 text-red-200',
 }
 
 const CONFIDENCE_STYLE: Record<string, string> = {
-  ALTA: 'border-emerald-400/30 bg-emerald-500/12 text-emerald-300',
-  MÉDIA: 'border-amber-400/30 bg-amber-500/12 text-amber-300',
-  BAIXA: 'border-red-400/30 bg-red-500/12 text-red-300',
+  ALTA: 'border-emerald-400/35 bg-emerald-500/15 text-emerald-100',
+  MÉDIA: 'border-amber-400/35 bg-amber-500/15 text-amber-100',
+  BAIXA: 'border-red-400/35 bg-red-500/15 text-red-100',
 }
 
 const MAX_ITEMS = 5
@@ -72,16 +72,22 @@ function buildSafeDecisions(decisions: Decision[]): Decision[] {
     .filter((decision): decision is Decision => decision !== null)
 }
 
-function HeaderMeta({
+function SectionHeader({
+  title,
   subtitle,
   count,
 }: {
+  title: string
   subtitle?: string
   count?: number
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="space-y-1">
+        <h2 className="text-lg font-semibold tracking-tight text-slate-950">
+          {title}
+        </h2>
+
         {subtitle ? (
           <p className="text-sm leading-6 text-slate-500">{subtitle}</p>
         ) : null}
@@ -107,27 +113,27 @@ function DecisionCard({
 }) {
   const actionStyle =
     ACTION_STYLE[decision.action] ??
-    'border-slate-500/30 bg-slate-500/10 text-slate-200'
+    'border-slate-500/35 bg-slate-500/15 text-slate-100'
 
   const confidenceStyle =
     CONFIDENCE_STYLE[decision.confidence ?? ''] ??
-    'border-slate-500/30 bg-slate-500/10 text-slate-200'
+    'border-slate-500/35 bg-slate-500/15 text-slate-100'
 
   const actionLabel = ACTION_LABEL[decision.action] ?? decision.action
   const hasReason = Boolean(decision.reason)
 
   return (
-    <li className="overflow-hidden rounded-2xl border border-slate-800 bg-[#071634] shadow-[0_2px_10px_rgba(2,6,23,0.2)] ring-1 ring-slate-800/80">
+    <li className="overflow-hidden rounded-2xl border border-slate-800 bg-[#06142d] shadow-[0_2px_10px_rgba(2,6,23,0.18)] ring-1 ring-slate-800/80">
       <button
         type="button"
         onClick={onToggle}
         disabled={!hasReason}
         aria-expanded={hasReason ? isOpen : undefined}
-        className="flex w-full items-start justify-between gap-4 bg-[#071634] p-4 text-left transition hover:bg-[#0a1b42] disabled:cursor-default"
+        className="flex w-full items-start justify-between gap-4 bg-[#06142d] p-4 text-left transition hover:bg-[#0a1b42] disabled:cursor-default"
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-xl font-bold tracking-tight text-white">
+            <span className="truncate text-lg font-bold tracking-tight text-white md:text-xl">
               {decision.ticker}
             </span>
 
@@ -155,6 +161,12 @@ function DecisionCard({
               </span>
             )}
           </div>
+
+          {decision.reason ? (
+            <p className="mt-3 text-sm leading-6 text-slate-200">
+              {decision.reason}
+            </p>
+          ) : null}
         </div>
 
         {hasReason ? (
@@ -165,8 +177,8 @@ function DecisionCard({
       </button>
 
       {hasReason && isOpen ? (
-        <div className="border-t border-white/10 bg-[#0a1b42] px-4 pb-4 pt-3">
-          <p className="text-sm leading-6 text-slate-200">{decision.reason}</p>
+        <div className="border-t border-white/10 bg-[#0b1b3f] px-4 pb-4 pt-3">
+          <p className="text-sm leading-6 text-slate-100">{decision.reason}</p>
         </div>
       ) : null}
     </li>
@@ -200,7 +212,8 @@ export default function WhatToDoNowSection({ decisions }: Props) {
 
   return (
     <section className="space-y-4">
-      <HeaderMeta
+      <SectionHeader
+        title="O que fazer agora"
         subtitle="Clique em cada indicação para ver o motivo."
         count={topDecisions.length}
       />
