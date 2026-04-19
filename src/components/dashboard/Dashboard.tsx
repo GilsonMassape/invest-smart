@@ -328,6 +328,29 @@ function readMetricItems(props: DashboardProps): DashboardMetricItem[] {
   ]
 }
 
+function buildExecutiveSummaryItems(
+  items: DashboardMetricItem[]
+): DashboardMetricItem[] {
+  const preferredOrder = [
+    'Investido',
+    'Patrimônio',
+    'Resultado',
+    'Resultado %',
+    'Rentabilidade mensal',
+    'Rentabilidade anual',
+  ]
+
+  const selected = preferredOrder
+    .map((label) => items.find((item) => item.label === label))
+    .filter((item): item is DashboardMetricItem => Boolean(item))
+
+  if (selected.length > 0) {
+    return selected
+  }
+
+  return items.filter((item) => item.label !== 'Volatilidade').slice(0, 6)
+}
+
 function getMetricToneClass(item: DashboardMetricItem): string {
   const normalizedLabel = item.label.trim().toLowerCase()
   const isDirectionalMetric =
@@ -818,7 +841,7 @@ function PriceStatusPanel({
         ? 'Não foi possível concluir a atualização automática dos preços.'
         : priceStatus === 'success'
           ? 'Os preços mais recentes já foram incorporados ao painel.'
-          : 'O painel ainda não recebeu uma atualização de preços nesta sessão.'
+        : 'O painel ainda não recebeu uma atualização de preços nesta sessão.'
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
@@ -872,6 +895,10 @@ export function Dashboard(props: DashboardProps) {
 
   const safeTotalPatrimony = toSafeNumber(props.totalPatrimony)
   const metricItems = useMemo(() => readMetricItems(props), [props])
+  const executiveSummaryItems = useMemo(
+    () => buildExecutiveSummaryItems(metricItems),
+    [metricItems]
+  )
 
   const topAssets = useMemo(
     () => distributionByAsset.slice(0, 8),
@@ -892,7 +919,7 @@ export function Dashboard(props: DashboardProps) {
   const hasTypeDistribution = distributionByType.length > 0
   const hasTopAssets = topAssets.length > 0
   const hasTopConcentration = topConcentration.length > 0
-  const hasMetricItems = metricItems.length > 0
+  const hasExecutiveSummaryItems = executiveSummaryItems.length > 0
   const hasEvolutionData = normalizedEvolutionPoints.length > 0
   const hasComparableEvolution = normalizedEvolutionPoints.length > 1
 
@@ -947,7 +974,7 @@ export function Dashboard(props: DashboardProps) {
       </div>
 
       <div className="grid gap-6 xl:grid-cols-12">
-        <SurfaceBlock className="xl:col-span-4 h-full">
+        <SurfaceBlock className="h-full xl:col-span-4">
           <SectionHeader
             title="Insights automáticos"
             subtitle="Clique em cada indicação para ver o resumo e o motivo detalhado."
@@ -972,22 +999,19 @@ export function Dashboard(props: DashboardProps) {
           </div>
         </SurfaceBlock>
 
-        <SurfaceBlock className="xl:col-span-8">
-          <SectionHeader
-            title="Resumo executivo"
-            subtitle="Indicadores principais distribuídos para ocupar melhor o espaço do painel."
-          />
+        <SurfaceBlock className="h-full xl:col-span-8">
+          <SectionHeader title="Resumo executivo" />
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 2xl:grid-cols-4">
-            {hasMetricItems ? (
-              metricItems.map((item) => (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {hasExecutiveSummaryItems ? (
+              executiveSummaryItems.map((item) => (
                 <MetricCard
                   key={item.label}
                   item={item}
                 />
               ))
             ) : (
-              <div className="sm:col-span-2 2xl:col-span-4">
+              <div className="md:col-span-2">
                 <EmptyState
                   title="Indicadores indisponíveis"
                   message="Ainda não há dados suficientes para montar o resumo executivo."
