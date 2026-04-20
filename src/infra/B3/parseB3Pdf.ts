@@ -16,17 +16,17 @@ type PositionedToken = {
 }
 
 const ALLOWED_SECTION_HINTS = [
-  'posicao - acoes',
-  'posicao - bdr - brazilian depositary receipts',
-  'posicao - etf - exchange traded fund',
-  'posicao - fii - fundo de investimento imobiliario',
-  'posicao - fundos de investimentos',
+  'acoes',
+  'bdr - brazilian depositary receipts',
+  'etf - exchange traded fund',
+  'fii - fundo de investimento imobiliario',
+  'fundos de investimentos',
 ]
 
 const STOP_SECTION_HINTS = [
-  'posicao - cdb - certificado de deposito bancario',
-  'posicao - lca - letra de credito do agronegocio',
-  'posicao - tesouro direto',
+  'cdb - certificado de deposito bancario',
+  'lca - letra de credito do agronegocio',
+  'tesouro direto',
   'proventos recebidos',
   'reembolsos de emprestimos de ativos',
   'negociacao',
@@ -70,14 +70,17 @@ function isValidTicker(value: string): boolean {
   return /^[A-Z]{4}\d{1,2}$/.test(value) || /^[A-Z]{5}\d{1,2}$/.test(value)
 }
 
-function isAllowedSectionLine(value: string): boolean {
+function isExactSectionLine(value: string, hints: string[]): boolean {
   const normalized = normalizeSearchText(value)
-  return ALLOWED_SECTION_HINTS.some((hint) => normalized.includes(hint))
+  return hints.some((hint) => normalized === hint || normalized.startsWith(hint))
+}
+
+function isAllowedSectionLine(value: string): boolean {
+  return isExactSectionLine(value, ALLOWED_SECTION_HINTS)
 }
 
 function isStopSectionLine(value: string): boolean {
-  const normalized = normalizeSearchText(value)
-  return STOP_SECTION_HINTS.some((hint) => normalized.includes(hint))
+  return isExactSectionLine(value, STOP_SECTION_HINTS)
 }
 
 function isTableHeaderLine(value: string): boolean {
@@ -91,7 +94,8 @@ function isTableHeaderLine(value: string): boolean {
     normalized.includes('preco de fechamento') ||
     normalized.includes('valor atualizado') ||
     normalized.includes('preco unitario atualizado') ||
-    normalized.includes('vencimento')
+    normalized.includes('vencimento') ||
+    normalized.includes('valor aplicado')
   )
 }
 
@@ -102,8 +106,12 @@ function isIgnorableLine(value: string): boolean {
     normalized.length === 0 ||
     normalized === 'total' ||
     normalized.startsWith('r$ ') ||
-    normalized.includes('relatorio mensal consolidado') ||
+    normalized.includes('extrato de posicao') ||
     normalized.includes('acesse investidor.b3.com.br') ||
+    normalized.includes('a valorizacao dos ativos') ||
+    normalized.includes('o investidor nao deve considerar') ||
+    normalized.includes('dessa forma, a b3 esta isenta') ||
+    normalized.includes('indiretamente pelo investidor') ||
     /^\d+\/\d+$/.test(normalized) ||
     isTableHeaderLine(normalized)
   )
@@ -112,7 +120,12 @@ function isIgnorableLine(value: string): boolean {
 function extractTicker(value: string): string | null {
   const match = value.match(/\b([A-Z]{4,5}\d{1,2})\b/)
   const ticker = match?.[1] ?? null
-  return ticker && isValidTicker(ticker) ? ticker : null
+
+  if (!ticker) {
+    return null
+  }
+
+  return isValidTicker(ticker) ? normalizeTicker(ticker) : null
 }
 
 function extractRowData(buffer: string): B3ParsedPosition | null {
@@ -124,16 +137,17 @@ function extractRowData(buffer: string): B3ParsedPosition | null {
 
   const tickerIndex = buffer.indexOf(ticker)
   const slice = tickerIndex >= 0 ? buffer.slice(tickerIndex + ticker.length) : buffer
-  const quantityPriceMatch = slice.match(
-    /(\d{1,3}(?:\.\d{3})*|\d+)\s+R\$\s*([\d.]+,\d{2})/
+
+  const match = slice.match(
+    /(\d{1,3}(?:\.\d{3})*|\d+)\s+R\$\s*([\d.]+,\d{2})\s+R\$\s*([\d.]+,\d{2})/
   )
 
-  if (!quantityPriceMatch) {
+  if (!match) {
     return null
   }
 
-  const quantity = parseBrazilianNumber(quantityPriceMatch[1] ?? '')
-  const avgPrice = parseBrazilianNumber(quantityPriceMatch[2] ?? '')
+  const quantity = parseBrazilianNumber(match[1] ?? '')
+  const avgPrice = parseBrazilianNumber(match[2] ?? '')
 
   if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isInteger(quantity)) {
     return null
@@ -144,7 +158,7 @@ function extractRowData(buffer: string): B3ParsedPosition | null {
   }
 
   return {
-    ticker: normalizeTicker(ticker),
+    ticker,
     quantity: roundQuantity(quantity),
     avgPrice: roundPrice(avgPrice),
   }
@@ -163,7 +177,7 @@ function deduplicatePositions(
     }
 
     const current = merged.get(ticker) ?? { quantity: 0, totalCost: 0 }
-    const quantity = roundQuantity(current.quantity + position.quantity)
+    const quantity = current.quantity + position.quantity
     const totalCost = current.totalCost + position.quantity * position.avgPrice
 
     merged.set(ticker, { quantity, totalCost })
@@ -177,7 +191,7 @@ function deduplicatePositions(
         data.quantity > 0 ? roundPrice(data.totalCost / data.quantity) : 0,
     }))
     .filter((position) => position.quantity > 0 && position.avgPrice > 0)
-    .sort((a, b) => a.ticker.localeCompare(b.ticker))
+    .sort((a, b) => a.ticker.localeCompare(b.ticker, 'pt-BR'))
 }
 
 function toPositionedToken(item: PdfTextItem): PositionedToken | null {
@@ -220,13 +234,12 @@ function buildLinesFromPageItems(items: PdfTextItem[]): string[] {
 
     if (existingRow) {
       existingRow.tokens.push(token)
-      continue
+    } else {
+      rows.push({
+        y: token.y,
+        tokens: [token],
+      })
     }
-
-    rows.push({
-      y: token.y,
-      tokens: [token],
-    })
   }
 
   return rows
@@ -280,7 +293,11 @@ function extractPositionsFromLines(lines: string[]): B3ParsedPosition[] {
       continue
     }
 
-    if (!inAllowedSection || isIgnorableLine(line)) {
+    if (!inAllowedSection) {
+      continue
+    }
+
+    if (isIgnorableLine(line)) {
       continue
     }
 
