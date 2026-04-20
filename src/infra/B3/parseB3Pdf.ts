@@ -67,20 +67,17 @@ function roundPrice(value: number): number {
 }
 
 function isValidTicker(value: string): boolean {
-  return /^[A-Z]{4}\d{1,2}$/.test(value) || /^[A-Z]{5}\d{1,2}$/.test(value)
-}
-
-function isExactSectionLine(value: string, hints: string[]): boolean {
-  const normalized = normalizeSearchText(value)
-  return hints.some((hint) => normalized === hint || normalized.startsWith(hint))
+  return /^[A-Z][A-Z0-9]{3,4}\d{1,2}$/.test(value)
 }
 
 function isAllowedSectionLine(value: string): boolean {
-  return isExactSectionLine(value, ALLOWED_SECTION_HINTS)
+  const normalized = normalizeSearchText(value)
+  return ALLOWED_SECTION_HINTS.some((hint) => normalized.includes(hint))
 }
 
 function isStopSectionLine(value: string): boolean {
-  return isExactSectionLine(value, STOP_SECTION_HINTS)
+  const normalized = normalizeSearchText(value)
+  return STOP_SECTION_HINTS.some((hint) => normalized.includes(hint))
 }
 
 function isTableHeaderLine(value: string): boolean {
@@ -108,8 +105,8 @@ function isIgnorableLine(value: string): boolean {
     normalized.startsWith('r$ ') ||
     normalized.includes('extrato de posicao') ||
     normalized.includes('acesse investidor.b3.com.br') ||
-    normalized.includes('a valorizacao dos ativos') ||
-    normalized.includes('o investidor nao deve considerar') ||
+    normalized.includes('a valorizacao dos ativos tem fins meramente informacionais') ||
+    normalized.includes('o investidor nao deve considerar essa estimativa') ||
     normalized.includes('dessa forma, a b3 esta isenta') ||
     normalized.includes('indiretamente pelo investidor') ||
     /^\d+\/\d+$/.test(normalized) ||
@@ -118,7 +115,7 @@ function isIgnorableLine(value: string): boolean {
 }
 
 function extractTicker(value: string): string | null {
-  const match = value.match(/\b([A-Z]{4,5}\d{1,2})\b/)
+  const match = value.match(/\b([A-Z][A-Z0-9]{3,4}\d{1,2})\b/)
   const ticker = match?.[1] ?? null
 
   if (!ticker) {
@@ -139,7 +136,7 @@ function extractRowData(buffer: string): B3ParsedPosition | null {
   const slice = tickerIndex >= 0 ? buffer.slice(tickerIndex + ticker.length) : buffer
 
   const match = slice.match(
-    /(\d{1,3}(?:\.\d{3})*|\d+)\s+R\$\s*([\d.]+,\d{2})\s+R\$\s*([\d.]+,\d{2})/
+    /(\d{1,3}(?:\.\d{3})*|\d+)\s+R\$\s*([\d.]+,\d{2})(?:\s+R\$\s*[\d.]+,\d{2})?/
   )
 
   if (!match) {
